@@ -6,7 +6,7 @@
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/02/28 12:12:22 by abin-moh          #+#    #+#             */
-/*   Updated: 2025/03/07 15:24:29 by abin-moh         ###   ########.fr       */
+/*   Updated: 2025/03/09 15:31:02 by abin-moh         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -36,22 +36,47 @@ static void	handle_signal(int sig_num)
 		ft_putstr_fd("Quit: (core dumped)\n", STDOUT_FILENO);
 }
 
+void	sigint_handler(int signum)
+{
+	write(1, "\n", 1);
+	rl_on_new_line();
+	rl_replace_line("", 0);
+	rl_redisplay();
+}
+
+void	sigquit_handler(int signum)
+{
+	if (g_signal == 1)
+		write(1, "Quit: (core dumped)\n", 20);
+}
+
 static void	setup_signal_handlers(void)
 {
-	struct sigaction	sa;
+	// struct sigaction	sa;
 
-	sa.sa_handler = handle_signal;
-	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = SA_RESTART;
+	// sa.sa_handler = handle_signal;
+	// sigemptyset(&sa.sa_mask);
+	// sa.sa_flags = SA_RESTART;
 
-	if (sigaction(SIGINT, &sa, NULL) == -1)
-	{
-		ft_putstr_fd("Error setting up SIGINT handler\n", STDERR_FILENO);
-	}
-	if (sigaction(SIGQUIT, &sa, NULL) == -1)
-	{
-		ft_putstr_fd("Error setting up SIGQUIT handler\n", STDERR_FILENO);
-	}
+	// if (sigaction(SIGINT, &sa, NULL) == -1)
+	// {
+	// 	ft_putstr_fd("Error setting up SIGINT handler\n", STDERR_FILENO);
+	// }
+	// if (sigaction(SIGQUIT, &sa, NULL) == -1)
+	// {
+	// 	ft_putstr_fd("Error setting up SIGQUIT handler\n", STDERR_FILENO);
+	// }
+	struct sigaction sa_int;
+	struct sigaction sa_quit;
+
+	sa_int.sa_handler = sigint_handler;
+	sa_int.sa_flags = 0;
+	sigemptyset(&sa_int.sa_mask);
+	sigaction(SIGINT, &sa_int, NULL);
+	sa_quit.sa_handler = sigquit_handler;
+	sa_quit.sa_flags = 0;
+	sigemptyset(&sa_quit.sa_mask);
+	sigaction(SIGQUIT, &sa_quit, NULL);
 }
 
 typedef struct s_commands
@@ -1021,7 +1046,8 @@ int main(int argc, char **argv, char **envp)
         commands = parse_input(input);
         if (commands)
         {
-            if (strcmp(commands->cmd, "export") == 0)
+            g_signal = 1;
+			if (strcmp(commands->cmd, "export") == 0)
                 export_variable(commands->args, &mini_envp);
             else if (strcmp(commands->cmd, "unset") == 0)
             {
@@ -1040,9 +1066,8 @@ int main(int argc, char **argv, char **envp)
         }
         free(input);
     }
-
     // Free the copied environment variables
-    for (int i = 0; mini_envp[i]; i++)
+	for (int i = 0; mini_envp[i]; i++)
         free(mini_envp[i]);
     free(mini_envp);
 	rl_clear_history();
