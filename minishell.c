@@ -6,7 +6,7 @@
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/02/28 12:12:22 by abin-moh          #+#    #+#             */
-/*   Updated: 2025/03/17 14:49:21 by abin-moh         ###   ########.fr       */
+/*   Updated: 2025/03/17 15:58:09 by abin-moh         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -22,7 +22,24 @@
 #include <termios.h>
 
 volatile sig_atomic_t	g_signal = 0;
-int						g_pid = -1;
+
+typedef struct s_commands
+{
+	char				*cmd;
+	char				**args;
+	int					argc;
+	int					type;
+	char				*input_file;
+	char				*output_file;
+	int					input_fd;
+	int					output_fd;
+	int					append_mode;
+	int					heredoc;
+	char				*delimiter;
+	int					g_pid;
+	struct s_commands	*next;
+	struct s_commands	*prev;
+}	t_commands;
 
 char	*ft_getenv(char *name, char **envp)
 {
@@ -50,111 +67,38 @@ int	ft_strcmp(const char *s1, const char *s2)
 	return (*(unsigned char *)s1 - *(unsigned char *)s2);
 }
 
-void	sigint_handler(int signum)
-{
-	(void)signum;
-	printf("Hello\n");
-}
-
-void	sigquit_handler(int signum)
-{
-	(void)signum;
-	printf("hi\n");
-}
-
-void	handle_signal(int signum)
+void	handle_signal(int signum, t_commands *commands)
 {
 	if (signum == SIGINT)
-		printf("\n^C\n");
-		rl_on_new_line();
-		rl_replace_line("", 0);
-		rl_redisplay();
-}
-
-void init_shell_signals(void)
-{
-    struct sigaction sa_int;
-    struct sigaction sa_quit;
-
-    // SIGINT - Display new prompt
-    sa_int.sa_handler = handle_signal;
-    sigemptyset(&sa_int.sa_mask);
-    sa_int.sa_flags = 0;
-    sigaction(SIGINT, &sa_int, NULL);
-
-    // SIGQUIT - Ignore
-    sa_quit.sa_handler = SIG_IGN;
-    sigemptyset(&sa_quit.sa_mask);
-    sa_quit.sa_flags = 0;
-    sigaction(SIGQUIT, &sa_quit, NULL);
-}
-
-void	ignore_all_signals(void)
-{
-	struct sigaction	sa;
-
-	sa.sa_handler = SIG_IGN;
-	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = 0;
-
-	sigaction(SIGINT, &sa, NULL);
-	sigaction(SIGQUIT, &sa, NULL);
-}
-
-void	reset_default_signals(void)
-{
-	struct sigaction sa_int;
-	struct sigaction sa_quit;
-
-	sa_int.sa_handler = sigint_handler;
-	sigemptyset(&sa_int.sa_mask);
-	sa_int.sa_flags = 0;
-	sigaction(SIGINT, &sa_int, NULL);
-
-	sa_quit.sa_handler = sigquit_handler;
-	sigemptyset(&sa_quit.sa_mask);
-	sa_quit.sa_flags = 0;
-	sigaction(SIGQUIT, &sa_quit, NULL);
+	{
+		if (commands->g_pid > 0)
+		{
+			printf("%d\n", commands->g_pid);
+		}
+		else
+		{
+			printf("\n^C\n");
+			rl_on_new_line();
+			rl_replace_line("", 0);
+			rl_redisplay();
+		}
+	}
+	else if (signum == SIGQUIT)
+	{
+		if (commands->g_pid > 0)
+			printf("^\\Core dumped\n");
+	}
 }
 
 void	setup_signal_handlers(struct termios *original_term, struct termios *new_term)
 {
-	struct sigaction	sa_int;
-	struct sigaction	sa_quit;
-
 	tcgetattr(STDIN_FILENO, original_term);
 	*new_term = *original_term;
 	new_term->c_lflag &= ~ECHOCTL;
 	tcsetattr(STDIN_FILENO, TCSANOW, new_term);
-
-	sa_int.sa_handler = handle_signal;
-	sigemptyset(&sa_int.sa_mask);
-	sa_int.sa_flags = 0;
-	sigaction(SIGINT, &sa_int, NULL);
-
-	sa_quit.sa_handler = SIG_IGN;
-	sigemptyset(&sa_quit.sa_mask);
-	sa_quit.sa_flags = 0;
-	sigaction(SIGQUIT, &sa_quit, NULL);
+	signal(SIGINT, (void(*)(int))handle_signal);
+	signal(SIGQUIT, (void(*)(int))handle_signal);
 }
-
-typedef struct s_commands
-{
-	char				*cmd;
-	char				**args;
-	int					argc;
-	int					type;
-	char				*input_file;
-	char				*output_file;
-	int					input_fd;
-	int					output_fd;
-	int					append_mode;
-	int					heredoc;
-	char				*delimiter;
-	int					g_pid;
-	struct s_commands	*next;
-	struct s_commands	*prev;
-}	t_commands;
 
 typedef enum e_token_type
 {
@@ -804,7 +748,6 @@ int	execute_command(t_commands *cmd, t_exec_cmd *vars, char **envp, int *g_exit_
 {
 	char	*path;
 
-	ignore_all_signals();
 	vars->pid = fork();
 	if (vars->pid == 0)
 	{
@@ -819,7 +762,7 @@ int	execute_command(t_commands *cmd, t_exec_cmd *vars, char **envp, int *g_exit_
 		exit(EXIT_FAILURE);
 	}
 	else if (vars->pid > 0) //Update global pid
-		g_pid = vars->pid;
+		cmd->g_pid = vars->pid;
 	else if (vars->pid < 0)
 		return (print_error("fork", -1));
 	return (0);
