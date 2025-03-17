@@ -6,7 +6,7 @@
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/02/28 12:12:22 by abin-moh          #+#    #+#             */
-/*   Updated: 2025/03/13 13:02:42 by abin-moh         ###   ########.fr       */
+/*   Updated: 2025/03/17 14:49:21 by abin-moh         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -22,8 +22,7 @@
 #include <termios.h>
 
 volatile sig_atomic_t	g_signal = 0;
-int						g_exit_status = 0;
-volatile sig_atomic_t	g_pid = -1;
+int						g_pid = -1;
 
 char	*ft_getenv(char *name, char **envp)
 {
@@ -51,41 +50,92 @@ int	ft_strcmp(const char *s1, const char *s2)
 	return (*(unsigned char *)s1 - *(unsigned char *)s2);
 }
 
-static void	handle_signal(int sig_num)
+void	sigint_handler(int signum)
 {
-	if (sig_num == SIGINT)
-	{
-		if (g_pid > 0)
-		{
-			ft_putstr_fd("^C\n", STDOUT_FILENO);
-			kill(g_pid, SIGINT);
-		}
-		else
-		{
-			ft_putstr_fd("\n^C\n", STDOUT_FILENO);
-			rl_on_new_line();
-			rl_replace_line("", 0);
-			rl_redisplay();
-		}
-	}
-	else if (sig_num == SIGQUIT)
-	{
-		if (g_pid > 0)
-		{
-			kill(g_pid, SIGQUIT);
-			ft_putstr_fd("^\\Quit (core dumped)\n", STDOUT_FILENO);
-		}
-	}
+	(void)signum;
+	printf("Hello\n");
 }
 
-static void	setup_signal_handlers(struct termios *original_term, struct termios *new_term)
+void	sigquit_handler(int signum)
 {
+	(void)signum;
+	printf("hi\n");
+}
+
+void	handle_signal(int signum)
+{
+	if (signum == SIGINT)
+		printf("\n^C\n");
+		rl_on_new_line();
+		rl_replace_line("", 0);
+		rl_redisplay();
+}
+
+void init_shell_signals(void)
+{
+    struct sigaction sa_int;
+    struct sigaction sa_quit;
+
+    // SIGINT - Display new prompt
+    sa_int.sa_handler = handle_signal;
+    sigemptyset(&sa_int.sa_mask);
+    sa_int.sa_flags = 0;
+    sigaction(SIGINT, &sa_int, NULL);
+
+    // SIGQUIT - Ignore
+    sa_quit.sa_handler = SIG_IGN;
+    sigemptyset(&sa_quit.sa_mask);
+    sa_quit.sa_flags = 0;
+    sigaction(SIGQUIT, &sa_quit, NULL);
+}
+
+void	ignore_all_signals(void)
+{
+	struct sigaction	sa;
+
+	sa.sa_handler = SIG_IGN;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+
+	sigaction(SIGINT, &sa, NULL);
+	sigaction(SIGQUIT, &sa, NULL);
+}
+
+void	reset_default_signals(void)
+{
+	struct sigaction sa_int;
+	struct sigaction sa_quit;
+
+	sa_int.sa_handler = sigint_handler;
+	sigemptyset(&sa_int.sa_mask);
+	sa_int.sa_flags = 0;
+	sigaction(SIGINT, &sa_int, NULL);
+
+	sa_quit.sa_handler = sigquit_handler;
+	sigemptyset(&sa_quit.sa_mask);
+	sa_quit.sa_flags = 0;
+	sigaction(SIGQUIT, &sa_quit, NULL);
+}
+
+void	setup_signal_handlers(struct termios *original_term, struct termios *new_term)
+{
+	struct sigaction	sa_int;
+	struct sigaction	sa_quit;
+
 	tcgetattr(STDIN_FILENO, original_term);
 	*new_term = *original_term;
 	new_term->c_lflag &= ~ECHOCTL;
 	tcsetattr(STDIN_FILENO, TCSANOW, new_term);
-	signal(SIGINT, handle_signal);
-	signal(SIGQUIT, SIG_IGN);
+
+	sa_int.sa_handler = handle_signal;
+	sigemptyset(&sa_int.sa_mask);
+	sa_int.sa_flags = 0;
+	sigaction(SIGINT, &sa_int, NULL);
+
+	sa_quit.sa_handler = SIG_IGN;
+	sigemptyset(&sa_quit.sa_mask);
+	sa_quit.sa_flags = 0;
+	sigaction(SIGQUIT, &sa_quit, NULL);
 }
 
 typedef struct s_commands
@@ -101,6 +151,7 @@ typedef struct s_commands
 	int					append_mode;
 	int					heredoc;
 	char				*delimiter;
+	int					g_pid;
 	struct s_commands	*next;
 	struct s_commands	*prev;
 }	t_commands;
@@ -373,6 +424,7 @@ t_commands	*init_command(void)
 	cmd->append_mode = 0;
 	cmd->heredoc = 0;
 	cmd->delimiter = NULL;
+	cmd->g_pid = -1;
 	cmd->next = NULL;
 	cmd->prev = NULL;
 	return (cmd);
@@ -748,10 +800,11 @@ int	setup_output(t_commands *cmd, t_exec_cmd *vars)
 	return (0);
 }
 
-int	execute_command(t_commands *cmd, t_exec_cmd *vars, char **envp)
+int	execute_command(t_commands *cmd, t_exec_cmd *vars, char **envp, int *g_exit_status)
 {
 	char	*path;
 
+	ignore_all_signals();
 	vars->pid = fork();
 	if (vars->pid == 0)
 	{
@@ -786,14 +839,14 @@ void	restore_original_fd(t_exec_cmd *vars)
 	close(vars->ori_out);
 }
 
-void	set_exit_status(t_exec_cmd *vars)
+void	set_exit_status(t_exec_cmd *vars, int *g_exit_status)
 {
 	if (WIFEXITED(vars->status))
-		g_exit_status = WEXITSTATUS(vars->status);
+		*g_exit_status = WEXITSTATUS(vars->status);
 	else if (WIFSIGNALED(vars->status))
-		g_exit_status = 128 + WTERMSIG(vars->status);
+		*g_exit_status = 128 + WTERMSIG(vars->status);
 	else
-		g_exit_status = 127;
+		*g_exit_status = 127;
 }
 
 void	print_env(char **envp)
@@ -816,7 +869,7 @@ void	print_pwd(char **envp)
 	printf("%s\n", pwd);
 }
 
-void execute_commands(t_commands *cmd_list, char **envp)
+void execute_commands(t_commands *cmd_list, char **envp, int *g_exit_status)
 {
 	t_exec_cmd	vars;
 
@@ -833,19 +886,18 @@ void execute_commands(t_commands *cmd_list, char **envp)
 		close(vars.fdout);
 		if (strcmp(cmd_list->cmd, "echo") == 0 && cmd_list->args[1]
 			&& strcmp(cmd_list->args[1], "$?") == 0)
-			printf("%d\n", g_exit_status);
+			printf("%d\n", *g_exit_status);
 		else if (strcmp(cmd_list->cmd, "env") == 0)
 			print_env(envp);
 		else if (strcmp(cmd_list->cmd, "pwd") == 0)
 			print_pwd(envp);
-		else if (execute_command(cmd_list, &vars, envp) < 0)
+		else if (execute_command(cmd_list, &vars, envp, g_exit_status) < 0)
 			return ;
 		cmd_list = cmd_list->next;
 	}
 	restore_original_fd(&vars);
 	waitpid(vars.pid, &vars.status, 0);
-	set_exit_status(&vars);
-	g_pid = -1;
+	set_exit_status(&vars, g_exit_status);
 }
 
 static int	is_valid_variable_name(const char *name)
@@ -1122,7 +1174,7 @@ void	update_env(char *dir, char *name, char ****mini_envp)
 	}
 }
 
-void	change_directory(t_commands **commands, char ***mini_envp)
+void	change_directory(t_commands **commands, char ***mini_envp, int *g_exit_status)
 {
 	char	**cmd;
 	char	*home;
@@ -1151,6 +1203,7 @@ void	change_directory(t_commands **commands, char ***mini_envp)
             ft_putstr_fd(cmd[1], STDERR_FILENO);
             ft_putstr_fd(": ", STDERR_FILENO);
             perror("");
+			*g_exit_status = 1;
 		}
 	}
 	getcwd(new_dir, 4096);
@@ -1159,12 +1212,12 @@ void	change_directory(t_commands **commands, char ***mini_envp)
 	*commands = (*commands)->next;
 }
 
-void	execution(t_commands *commands, char **mini_envp)
+void	execution(t_commands *commands, char **mini_envp, int *g_exit_status)
 {
 	if (strcmp(&commands->cmd[0], "cd") == 0)
-		change_directory(&commands, &mini_envp);
+		change_directory(&commands, &mini_envp, g_exit_status);
 	if (commands != NULL)
-		execute_commands(commands, mini_envp);
+		execute_commands(commands, mini_envp, g_exit_status);
 }
 
 int main(int argc, char **argv, char **envp)
@@ -1173,11 +1226,18 @@ int main(int argc, char **argv, char **envp)
     char *input;
     t_commands *commands;
 	struct termios original_term, new_term;
+	int	g_exit_status;
 
+	g_exit_status = 0;
     mini_envp = copy_envp(envp);
+	setup_signal_handlers(&original_term, &new_term);
     while (1)
     {
-		setup_signal_handlers(&original_term, &new_term);
+		if (g_signal)
+		{
+			g_exit_status = g_signal;
+			g_signal = 0;
+		}
         input = readline("minishell> ");
         if (!input)
         {
@@ -1189,7 +1249,6 @@ int main(int argc, char **argv, char **envp)
         commands = parse_input(input);
         if (commands)
         {
-			signal(SIGQUIT, handle_signal);
             if (strcmp(commands->cmd, "export") == 0)
                 export_variable(commands->args, &mini_envp);
             else if (strcmp(commands->cmd, "unset") == 0)
@@ -1200,7 +1259,7 @@ int main(int argc, char **argv, char **envp)
                 }
             }
             else
-                execution(commands, mini_envp);
+                execution(commands, mini_envp, &g_exit_status);
             free_commands(commands);
         }
         else
@@ -1212,5 +1271,5 @@ int main(int argc, char **argv, char **envp)
 	tcsetattr(STDERR_FILENO, TCSANOW, &original_term);
     free(mini_envp);
 	rl_clear_history();
-    return 0;
+    return (g_exit_status);
 }
