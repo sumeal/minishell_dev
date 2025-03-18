@@ -6,7 +6,7 @@
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/02/28 12:12:22 by abin-moh          #+#    #+#             */
-/*   Updated: 2025/03/17 15:58:09 by abin-moh         ###   ########.fr       */
+/*   Updated: 2025/03/18 15:19:53 by abin-moh         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -67,26 +67,15 @@ int	ft_strcmp(const char *s1, const char *s2)
 	return (*(unsigned char *)s1 - *(unsigned char *)s2);
 }
 
-void	handle_signal(int signum, t_commands *commands)
+void	handle_signal_parent(int signum)
 {
 	if (signum == SIGINT)
 	{
-		if (commands->g_pid > 0)
-		{
-			printf("%d\n", commands->g_pid);
-		}
-		else
-		{
-			printf("\n^C\n");
-			rl_on_new_line();
-			rl_replace_line("", 0);
-			rl_redisplay();
-		}
-	}
-	else if (signum == SIGQUIT)
-	{
-		if (commands->g_pid > 0)
-			printf("^\\Core dumped\n");
+		printf("\n^C\n");
+		rl_on_new_line();
+		rl_replace_line("", 0);
+		rl_redisplay();
+		g_signal = 130;
 	}
 }
 
@@ -96,9 +85,29 @@ void	setup_signal_handlers(struct termios *original_term, struct termios *new_te
 	*new_term = *original_term;
 	new_term->c_lflag &= ~ECHOCTL;
 	tcsetattr(STDIN_FILENO, TCSANOW, new_term);
-	signal(SIGINT, (void(*)(int))handle_signal);
-	signal(SIGQUIT, (void(*)(int))handle_signal);
+	signal(SIGINT, SIG_DFL);
+	signal(SIGQUIT, SIG_DFL);
+	signal(SIGINT, handle_signal_parent);
+	signal(SIGQUIT,SIG_IGN);
 }
+
+void	handle_signal_child(int signum)
+{
+	if (signum == SIGINT)
+		ft_putstr_fd("^C\n", STDOUT_FILENO);
+	else if (signum == SIGQUIT)
+		ft_putstr_fd("^\\Quit (core dumped)\n", STDOUT_FILENO);
+}
+
+void	setup_signal_child(void)
+{
+	signal(SIGINT, SIG_DFL);
+	signal(SIGQUIT, SIG_DFL);
+	signal(SIGINT, handle_signal_child);
+	signal(SIGQUIT, handle_signal_child);
+
+}
+
 
 typedef enum e_token_type
 {
@@ -748,6 +757,7 @@ int	execute_command(t_commands *cmd, t_exec_cmd *vars, char **envp, int *g_exit_
 {
 	char	*path;
 
+	setup_signal_child();
 	vars->pid = fork();
 	if (vars->pid == 0)
 	{
@@ -770,6 +780,7 @@ int	execute_command(t_commands *cmd, t_exec_cmd *vars, char **envp, int *g_exit_
 
 void	save_original_fd(t_exec_cmd *vars)
 {
+	vars->status = 0;
 	vars->ori_in = dup(STDIN_FILENO);
 	vars->ori_out = dup(STDOUT_FILENO);
 }
@@ -812,35 +823,29 @@ void	print_pwd(char **envp)
 	printf("%s\n", pwd);
 }
 
-void execute_commands(t_commands *cmd_list, char **envp, int *g_exit_status)
+void	print_echo(char **commands)
 {
-	t_exec_cmd	vars;
+	int	new_line;
+	int	i;
 
-	save_original_fd(&vars);
-	if (setup_input(cmd_list, &vars) < 0)
-		return ;
-	while (cmd_list)
-	{
-		dup2(vars.fdin, STDIN_FILENO);
-		close(vars.fdin);
-		if (setup_output(cmd_list, &vars) < 0)
-			return ;
-		dup2(vars.fdout, STDOUT_FILENO);
-		close(vars.fdout);
-		if (strcmp(cmd_list->cmd, "echo") == 0 && cmd_list->args[1]
-			&& strcmp(cmd_list->args[1], "$?") == 0)
-			printf("%d\n", *g_exit_status);
-		else if (strcmp(cmd_list->cmd, "env") == 0)
-			print_env(envp);
-		else if (strcmp(cmd_list->cmd, "pwd") == 0)
-			print_pwd(envp);
-		else if (execute_command(cmd_list, &vars, envp, g_exit_status) < 0)
-			return ;
-		cmd_list = cmd_list->next;
+	i = 1;
+	new_line = 0;
+	if (!commands[1])
+		printf("\n");
+	else if (ft_strcmp(commands[1], "-n") == 0)
+	{	
+		new_line = 1;
+		i = 2;
 	}
-	restore_original_fd(&vars);
-	waitpid(vars.pid, &vars.status, 0);
-	set_exit_status(&vars, g_exit_status);
+	while(commands[i])
+	{
+		printf("%s", commands[i]);
+		if (commands[i + 1] != NULL)
+			printf(" ");
+		i++;
+	}
+	if (new_line == 0)
+		printf("\n");
 }
 
 static int	is_valid_variable_name(const char *name)
@@ -1136,8 +1141,14 @@ void	change_directory(t_commands **commands, char ***mini_envp, int *g_exit_stat
 		home = ft_getenv("HOME", *mini_envp);
 		chdir(home);
 	}
-	else if (strcmp(cmd[1], "..") == 0)
+	else if (ft_strcmp(cmd[1], "..") == 0)
 		chdir("..");
+	else if (ft_strcmp(cmd[1], "-") == 0)
+	{
+		home = ft_getenv("OLDPWD", *mini_envp);
+		printf("%s\n", ft_getenv("OLDPWD", *mini_envp));
+		chdir(home);
+	}
 	else
 	{
 		if (chdir(cmd[1]) != 0)
@@ -1152,67 +1163,158 @@ void	change_directory(t_commands **commands, char ***mini_envp, int *g_exit_stat
 	getcwd(new_dir, 4096);
 	update_env(cur_dir, "OLDPWD", &mini_envp);
 	update_env(new_dir, "PWD", &mini_envp);
-	*commands = (*commands)->next;
+}
+
+void	print_exit_status(int *g_exit_status)
+{
+	printf("%d\n", *g_exit_status);
+	*g_exit_status = 0;
+}
+
+void execute_commands(t_commands *cmd_list, char **envp, int *g_exit_status)
+{
+	t_exec_cmd	vars;
+
+	save_original_fd(&vars);
+	if (setup_input(cmd_list, &vars) < 0)
+		return ;
+	while (cmd_list)
+	{
+		dup2(vars.fdin, STDIN_FILENO);
+		close(vars.fdin);
+		if (setup_output(cmd_list, &vars) < 0)
+			return ;
+		dup2(vars.fdout, STDOUT_FILENO);
+		close(vars.fdout);
+		if (strcmp(cmd_list->cmd, "echo") == 0 && cmd_list->args[1]
+			&& strcmp(cmd_list->args[1], "$?") == 0)
+			print_exit_status(g_exit_status);
+		else if (strcmp(cmd_list->cmd, "cd") == 0)
+			change_directory(&cmd_list, &envp, g_exit_status);
+		else if (strcmp(cmd_list->cmd, "echo") == 0)
+			print_echo(cmd_list->args);
+		else if (strcmp(cmd_list->cmd, "env") == 0)
+			print_env(envp);
+		else if (strcmp(cmd_list->cmd, "pwd") == 0)
+			print_pwd(envp);
+		else if (execute_command(cmd_list, &vars, envp, g_exit_status) < 0)
+			return ;
+		cmd_list = cmd_list->next;
+	}
+	restore_original_fd(&vars);
+	waitpid(vars.pid, &vars.status, 0);
+	if (vars.status)
+		set_exit_status(&vars, g_exit_status);
+}
+
+void	exit_program(t_commands *commands, char **mini_envp, int *g_exit_status)
+{
+	free_commands(commands);
+	free_path(mini_envp);
+	exit (*g_exit_status);
+}
+
+int	is_num(char *s)
+{
+	int	i;
+
+	i = 0;
+	while (s[i])
+	{
+		if (!(s[i] >= 48 && s[i] <= 57))
+			return (0);
+		i++;
+	}
+	return (1);
+}
+
+void	unset_env(t_commands *commands, char ** mini_envp)
+{
+	int	i;
+
+	i = 1;
+
+	while (commands->args[i])
+	{
+		unset_variable(commands->args[i], &mini_envp);
+		i++;
+	}
+}
+
+void	check_exit_value(t_commands *commands, int *g_exit_status)
+{
+	int	temp;
+
+	if (is_num(commands->args[1]))
+	{
+		temp = ft_atoi(commands->args[1]);
+		*g_exit_status = (temp % 256);
+	}
+	else
+	{
+		ft_putstr_fd("bash: exit: ", STDERR_FILENO);
+		ft_putstr_fd(commands->args[1], STDERR_FILENO);
+		ft_putstr_fd(": numeric argument required\n", STDERR_FILENO);
+		*g_exit_status = 2;
+	}
 }
 
 void	execution(t_commands *commands, char **mini_envp, int *g_exit_status)
 {
-	if (strcmp(&commands->cmd[0], "cd") == 0)
-		change_directory(&commands, &mini_envp, g_exit_status);
-	if (commands != NULL)
+	if (strcmp(commands->cmd, "export") == 0)
+		export_variable(commands->args, &mini_envp);
+	else if (strcmp(commands->cmd, "unset") == 0)
+		unset_env(commands, mini_envp);
+	else if (strcmp(commands->cmd, "exit") == 0)
+	{
+		ft_putstr_fd("exit\n", STDERR_FILENO);
+		if (commands->args[1])
+			check_exit_value(commands, g_exit_status);
+		exit_program(commands, mini_envp, g_exit_status);
+	}
+	else
 		execute_commands(commands, mini_envp, g_exit_status);
 }
 
 int main(int argc, char **argv, char **envp)
 {
-    char **mini_envp;
-    char *input;
-    t_commands *commands;
-	struct termios original_term, new_term;
-	int	g_exit_status;
+	char			**mini_envp;
+	char			*input;
+	t_commands		*commands;
+	struct termios	original_term;
+	struct termios	new_term;
+	int				g_exit_status;
 
 	g_exit_status = 0;
-    mini_envp = copy_envp(envp);
-	setup_signal_handlers(&original_term, &new_term);
-    while (1)
-    {
-		if (g_signal)
+	mini_envp = copy_envp(envp);
+	while (1)
+	{
+		setup_signal_handlers(&original_term, &new_term);
+		input = readline("minishell> ");
+		if (g_signal == 130)
 		{
 			g_exit_status = g_signal;
 			g_signal = 0;
 		}
-        input = readline("minishell> ");
-        if (!input)
-        {
-            printf("exit\n");
-            break;
-        }
-        if (*input)
-            add_history(input);
-        commands = parse_input(input);
-        if (commands)
-        {
-            if (strcmp(commands->cmd, "export") == 0)
-                export_variable(commands->args, &mini_envp);
-            else if (strcmp(commands->cmd, "unset") == 0)
-            {
-                for (int i = 1; commands->args[i]; i++)
-                {
-                    unset_variable(commands->args[i], &mini_envp);
-                }
-            }
-            else
-                execution(commands, mini_envp, &g_exit_status);
-            free_commands(commands);
-        }
-        else
-        {
-            printf("Error parsing command\n");
-        }
-        free(input);
-    }
+		if (!input)
+		{
+			printf("exit\n");
+			break ;
+		}
+		if (*input)
+			add_history(input);
+		commands = parse_input(input);
+		if (commands)
+		{
+			execution(commands, mini_envp, &g_exit_status);
+			free_commands(commands);
+		}
+		else
+			printf("\n");
+		free(input);
+	}
 	tcsetattr(STDERR_FILENO, TCSANOW, &original_term);
-    free(mini_envp);
+	free_path(mini_envp);
 	rl_clear_history();
-    return (g_exit_status);
+	return (g_exit_status);
 }
