@@ -6,7 +6,7 @@
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/02/28 12:12:22 by abin-moh          #+#    #+#             */
-/*   Updated: 2025/03/19 15:41:20 by abin-moh         ###   ########.fr       */
+/*   Updated: 2025/03/23 12:16:54 by abin-moh         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -31,6 +31,18 @@ typedef struct s_mini_envp
 	struct s_mini_envp	*next;
 }	t_mini_envp;
 
+typedef struct s_exec_cmd
+{
+	int		ori_in;
+	int		ori_out;
+	int		fdin;
+	int		fdout;
+	int		pipefd[2];
+	pid_t	pid;
+	int		status;
+	int		builtin_executed;
+}	t_exec_cmd;
+
 typedef struct s_commands
 {
 	char				*cmd;
@@ -44,7 +56,6 @@ typedef struct s_commands
 	int					append_mode;
 	int					heredoc;
 	char				*delimiter;
-	int					g_pid;
 	struct s_commands	*next;
 	struct s_commands	*prev;
 }	t_commands;
@@ -354,7 +365,7 @@ static void	handle_token(t_tokenizer *tokenizer)
 
 t_token	*tokenize_input(char *input)
 {
-	t_tokenizer tokenizer;
+	t_tokenizer	tokenizer;
 
 	tokenizer.input = input;
 	tokenizer.i = 0;
@@ -385,7 +396,6 @@ t_commands	*init_command(void)
 	cmd->append_mode = 0;
 	cmd->heredoc = 0;
 	cmd->delimiter = NULL;
-	cmd->g_pid = -1;
 	cmd->next = NULL;
 	cmd->prev = NULL;
 	return (cmd);
@@ -554,7 +564,11 @@ static int	initialize_command(t_commands **cmd_list, t_commands **current_cmd,
 	if (!*cmd_list || (*current)->type == TOKEN_PIPE)
 	{
 		if ((*current)->type == TOKEN_PIPE)
-			*current = (*current)->next;
+		{
+			if (!(*current = (*current)->next))
+				handle_error(cmd_list);
+				return (-1);
+		}
 		if (!create_new_command(cmd_list, current_cmd))
 		{
 			handle_error(cmd_list);
@@ -620,47 +634,6 @@ t_commands	*parse_input(char *input)
 	free_tokens(tokens);
 	return (commands);
 }
-
-void print_commands(t_commands *cmd)
-{
-	int i;
-	int cmd_num = 1;
-
-	while (cmd)
-	{
-		printf("\n---- Command %d ----\n", cmd_num++);
-		printf("Command: %s\n", cmd->cmd ? cmd->cmd : "(null)");
-		printf("Arguments (%d): ", cmd->argc);
-		for (i = 0; i < cmd->argc; i++)
-            printf("[%s] ", cmd->args[i]);
-        printf("\n");
-        if (cmd->input_file)
-            printf("Input redirection: %s\n", cmd->input_file);
-        
-        if (cmd->heredoc)
-            printf("Heredoc with delimiter: %s\n", cmd->delimiter);
-            
-        if (cmd->output_file)
-            printf("Output redirection: %s (mode: %s)\n", 
-                cmd->output_file, cmd->append_mode ? "append" : "overwrite");
-        if (cmd->next)
-            printf("Piped to next command\n");
-        cmd = cmd->next;
-    }
-    printf("\n");
-}
-
-typedef struct s_exec_cmd
-{
-	int		ori_in;
-	int		ori_out;
-	int		fdin;
-	int		fdout;
-	int		pipefd[2];
-	pid_t	pid;
-	int		status;
-	int		builtin_executed;
-}	t_exec_cmd;
 
 int	print_error(char *s, int exit)
 {
@@ -780,8 +753,6 @@ int	execute_command(t_commands *cmd, t_exec_cmd *vars, char **envp, int *g_exit_
 		perror("execve");
 		exit(EXIT_FAILURE);
 	}
-	else if (vars->pid > 0) //Update global pid
-		cmd->g_pid = vars->pid;
 	else if (vars->pid < 0)
 		return (print_error("fork", -1));
 	return (0);
@@ -813,14 +784,17 @@ void	set_exit_status(t_exec_cmd *vars, int *g_exit_status)
 		*g_exit_status = 127;
 }
 
-int	print_env(t_commands **cmd_list, **envp, int *g_exit_status)
+int	print_env(t_commands **cmd_list, char **envp, int *g_exit_status)
 {
-	int	i;
+	int		i;
+	char	*have;
 
 	i = 0;
 	while (envp[i])
 	{
-		printf("%s\n", envp[i]);
+		have = ft_strchr(envp[i], '=');
+		if (have)
+			printf("%s\n", envp[i]);
 		i++;
 	}
 	*g_exit_status = 0;
@@ -864,6 +838,26 @@ int	print_echo(char **commands, int *g_exit_status)
 	return (1);
 }
 
+int	count_envp(char **envp)
+{
+	int	count;
+
+	count = 0;
+	while (envp[count])
+		count++;
+	return (count);
+}
+
+char	*get_var_name(char *envp)
+{
+	char	*pos;
+
+	pos = ft_strchr(envp, '=');
+	if (!pos)
+		return (NULL);
+	return (ft_substr(envp, 0, pos - envp));
+}
+
 static int	is_valid_variable_name(const char *name)
 {
 	if (!name || !*name)
@@ -876,177 +870,260 @@ static int	is_valid_variable_name(const char *name)
 	return (1);
 }
 
-static int	find_variable(char *var_name, char **envp)
+static int	find_variable(char *args, char **envp)
 {
 	int		i;
-	size_t	len;
+	char	*name1;
+	char	*name2;
 
+	name1 = get_var_name(args);
 	i = 0;
-	len = ft_strlen(var_name);
 	while (envp[i])
 	{
-		if (ft_strncmp(envp[i], var_name, len) == 0 && envp[i][len] == '=')
+		name2 = get_var_name(envp[i]);
+		if (name1 && name2 && ft_strcmp(name1, name2) == 0)
+		{
+			free(name1);
+			free(name2);
 			return (i);
+		}
+		free(name2);
 		i++;
 	}
+	free(name1);
 	return (-1);
 }
 
-static void	add_new_variable(char ***envp, char *new_var)
+static void add_new_variable(char ***envp, char **new_var)
 {
-	int		count;
-	char	**new_envp;
-	int		i;
+    int		count;
+    char	**new_envp;
+    int		i;
 
-	count = 0;
-	while ((*envp)[count])
-		count++;
-	new_envp = (char **)ft_calloc(count + 2, sizeof(char *));
-	if (!new_envp)
-	{
-		free(new_var);
-		return ;
-	}
+    count = count_envp(*envp);
+    new_envp = ft_calloc(count + 2, sizeof(char *));
+    if (!new_envp)
+    {
+        free(new_var);
+        return ;
+    }
+    i = 0;
+    while (i < count)
+    {
+        new_envp[i] = ft_strdup((*envp)[i]);
+        i++;
+    }
+	free(new_envp[i]);
+    new_envp[i] = *new_var;
+    new_envp[i + 1] = NULL;
+	free_path(*envp);
+    *envp = new_envp;
+}
+
+
+int	check_valid_value(char *s)
+{
+	int	i;
+
 	i = 0;
-	while (i < count)
+	while (s[i])
 	{
-		new_envp[i] = (*envp)[i];
+		if (!(ft_isalnum(s[i]) != 0 || s[i] == '_' || s[i] == '='))
+		{
+			ft_putstr_fd("bash: ", STDERR_FILENO);
+			ft_putstr_fd(s + i, STDERR_FILENO);
+			ft_putstr_fd(": event not found\n", STDERR_FILENO);
+			return (-1);
+		}
 		i++;
 	}
-	new_envp[count] = new_var;
-	new_envp[count + 1] = NULL;
-	free(*envp);
-	*envp = new_envp;
+	return (0);
 }
 
-static void	set_variable(char *var_name, char *var_value, char ***envp)
+char *change_format(char *args)
 {
-	int		i;
-	char	*tmp;
-	char	*new_var;
+    char	*ret;
+    int		i;
+	int		j;
+	char	*have;
 
-	i = find_variable(var_name, *envp);
-	if (*var_value == '\0')
-		tmp = ft_strdup(var_name);
-	else
-		tmp = ft_strjoin(var_name, "=");
-	new_var = ft_strjoin(tmp, var_value);
-	free(tmp);
-	if (!new_var)
-		return ;
-	if (i >= 0)
-	{
-		free((*envp)[i]);
-		(*envp)[i] = new_var;
-	}
-	else
-		add_new_variable(envp, new_var);
+    have = ft_strchr(args, '=');
+    if (!have)
+        return (ft_strdup(args));
+    ret = malloc(sizeof(char) * (ft_strlen(args) + 3));
+    if (!ret)
+        return (NULL);
+    i = 0;
+    while (args[i] != '=' && args[i] != '\0') {
+        ret[i] = args[i];
+        i++;
+    }
+	ret[i++] = '=';
+	j = i;
+    ret[i++] = '"';
+    while (args[j] != '\0')
+		ret[i++] = args[j++];
+    ret[i] = '"';
+    ret[i + 1] = '\0';
+    return (ret);
 }
+
+
+int	add_variable_to_env(char ***envp, char **args)
+{
+    int i;
+    int index;
+    char *tmp;
+    char *new;
+
+    i = 1;
+    while (args[i])
+    {
+        if (check_valid_value(args[i]) < 0)
+            return (0);
+                index = find_variable(args[i], *envp);
+        new = ft_strdup(args[i]);
+        if (!new)
+            return (0);
+        if (index >= 0)
+        {
+            free((*envp)[index]);
+            (*envp)[index] = new;
+        }
+        else
+            add_new_variable(envp, &new);
+        i++;
+    }
+	return (1);
+}
+
 
 char	**copy_envp(char **envp)
 {
 	char	**copy;
 	int		i;
 
-	i = 0;
-	while (envp[i])
-		i++;
+	i = count_envp(envp);
 	copy = (char **)malloc(sizeof(char *) * (i + 1));
 	if (!copy)
 		return (NULL);
-	i = 0;
-	while (envp[i])
-	{
+	i = -1;
+	while (envp[++i])
 		copy[i] = ft_strdup(envp[i]);
-		i++;
-	}
 	copy[i] = NULL;
 	return (copy);
 }
 
-static void	sort_envp(char **envp)
+int	skip(char *envp1, char *envp2)
 {
-	int		count;
-	int		i;
-	int		j;
+	if (!envp1 || !envp2)
+		return (1);
+	if (ft_strncmp(envp1, "_=", 2) == 0 || ft_strncmp(envp2, "_=", 2) == 0)
+		return (1);
+	return (0);
+}
+
+void	swap_envp(char **envp, int i, int j)
+{
 	char	*temp;
 
-	count = 0;
-	i = 0;
-	while (envp[count])
-		count++;
-	while (i < count - 1)
+	temp = envp[i];
+	envp[i] = envp[j];
+	envp[j] = temp;
+}
+
+void	sort_env(char **envp)
+{
+	int		i;
+	int		j;
+	int		count;
+	char	*name1;
+	char	*name2;
+
+	count = count_envp(envp);
+	i = -1;
+	while (++i < count - 1)
 	{
-		j = 0;
-		while (j < count - i - 1)
+		j = -1;
+		while (++j < count - i - 1)
 		{
-			if (ft_strcmp(envp[j], envp[j + 1]) > 0)
+			if (skip(envp[j], envp[j + 1]) == 0)
 			{
-				temp = envp[j];
-				envp[j] = envp[j + 1];
-				envp[j + 1] = temp;
+				name1 = get_var_name(envp[j]);
+				name2 = get_var_name(envp[j + 1]);
+				if (name1 && name2 && ft_strcmp(name1, name2) > 0)
+					swap_envp(envp, j, j + 1);
+				free(name1);
+				free(name2);
 			}
-			j++;
+		}
+	}
+}
+
+char	**duplicate_env_array(char **envp)
+{
+	char	**copy;
+	int		i;
+	int		count;
+
+	i = 0;
+	count = count_envp(envp);
+	copy = (char **)malloc(sizeof(char *) * (count + 1));
+	if (!copy)
+		return (NULL);
+	while (i < count)
+	{
+		copy[i] = ft_strdup(change_format(envp[i]));
+		if (!copy[i])
+		{
+			free_path(copy);
+			return (NULL);
 		}
 		i++;
 	}
+	copy[count] = NULL;
+	return (copy);
 }
 
-static void	print_exported_variables(char **envp)
+void print_sorted_envp(char **envp)
 {
-	int	i;
+	char	**copy;
+	int		i;
 
-	sort_envp(envp);
+	copy = duplicate_env_array(envp);
+	if (!copy)
+		return ;
+	sort_env(copy);
 	i = 0;
-	while (envp[i])
+	while (copy[i])
 	{
-		ft_putstr_fd("declare -x ", STDOUT_FILENO);
-		ft_putstr_fd(envp[i], STDOUT_FILENO);
-		ft_putchar_fd('\n', STDOUT_FILENO);
+		if (ft_strncmp(copy[i], "_=", 2) != 0)
+		{
+			ft_putstr_fd("declare -x ", STDOUT_FILENO);
+			ft_putstr_fd(copy[i], STDOUT_FILENO);
+			ft_putchar_fd('\n', STDOUT_FILENO);
+		}
 		i++;
 	}
+	free_path(copy);
 }
 
-static void	handle_export_argument(char *arg, char ***envp)
+void export_variable(char **args, char ***envp, int *g_exit_status)
 {
-	char	*equal;
-
-	equal = ft_strchr(arg, '=');
-	if (equal)
-		*equal = '\0';
-	if (!is_valid_variable_name(arg))
-	{
-		if (equal)
-			*equal = '=';
-		ft_putstr_fd("export: `", STDERR_FILENO);
-		ft_putstr_fd(arg, STDERR_FILENO);
-		ft_putstr_fd("': not an identifier\n", STDERR_FILENO);
-	}
-	else if (equal)
-	{
-		set_variable(arg, equal + 1, envp);
-		*equal = '=';
-	}
-	else if (find_variable(arg, *envp) == -1)
-		set_variable(arg, "", envp);
-}
-
-void	export_variable(char **args, char ***envp, int *g_exit_status)
-{
-	int	i;
+	int	ret_val;
 
 	if (!args[1])
 	{
-		print_exported_variables(*envp);
+		print_sorted_envp(*envp);
+		*g_exit_status = 0;
 		return ;
 	}
-	i = 1;
-	while (args[i])
+	else
 	{
-		handle_export_argument(args[i], envp);
-		i++;
+		ret_val = add_variable_to_env(envp, args);
+		if (ret_val)
+			*g_exit_status = 0;
 	}
-	*g_exit_status = 0;
 }
 
 static int	find_index(char *var, char **envp)
@@ -1172,7 +1249,6 @@ void handle_directory_change(char **cmd, char ***mini_envp, int *g_exit_status)
 	char	cur_dir[4096];
 
 	getcwd(cur_dir, 4096);
-
 	if (!cmd[1])
 	{
 		home = ft_getenv("HOME", *mini_envp);
@@ -1208,7 +1284,6 @@ void change_directory(t_commands **commands, char ***mini_envp, int *g_exit_stat
 	char	cur_dir[4096];
 
 	*g_exit_status = 0;
-
 	if ((*commands)->next != NULL)
 	{
 		*commands = (*commands)->next;
@@ -1316,7 +1391,6 @@ void execute_commands(t_commands *cmd_list, char **envp, int *g_exit_status)
 	restore_original_fd(&vars);
 }
 
-
 void	exit_program(t_commands *commands, char **mini_envp, int *g_exit_status)
 {
 	free_commands(commands);
@@ -1343,7 +1417,6 @@ void	unset_env(t_commands *commands, char ** mini_envp, int *g_exit_status)
 	int	i;
 
 	i = 1;
-
 	while (commands->args[i])
 	{
 		unset_variable(commands->args[i], &mini_envp);
@@ -1370,21 +1443,53 @@ void	check_exit_value(t_commands *commands, int *g_exit_status)
 	}
 }
 
-void	execution(t_commands *commands, char **mini_envp, int *g_exit_status)
+void	execution(t_commands *commands, char ***mini_envp, int *g_exit_status)
 {
 	if (strcmp(commands->cmd, "export") == 0)
-		export_variable(commands->args, &mini_envp, g_exit_status);
+		export_variable(commands->args, mini_envp, g_exit_status);
 	else if (strcmp(commands->cmd, "unset") == 0)
-		unset_env(commands, mini_envp, g_exit_status);
+		unset_env(commands, *mini_envp, g_exit_status);
 	else if (strcmp(commands->cmd, "exit") == 0)
 	{
 		ft_putstr_fd("exit\n", STDERR_FILENO);
 		if (commands->args[1])
 			check_exit_value(commands, g_exit_status);
-		exit_program(commands, mini_envp, g_exit_status);
+		exit_program(commands, *mini_envp, g_exit_status);
 	}
 	else
-		execute_commands(commands, mini_envp, g_exit_status);
+		execute_commands(commands, *mini_envp, g_exit_status);
+}
+
+int	is_envp_null_terminated(char **envp)
+{
+    int	i;
+
+    if (!envp)
+    {
+        fprintf(stderr, "Error: envp is NULL\n");
+        return (0); // Not null-terminated
+    }
+
+    i = 0;
+    while (envp[i])
+    {
+        // Check if the current pointer is valid
+        if (!envp[i])
+        {
+            fprintf(stderr, "Error: envp[%d] is NULL\n", i);
+            return (0); // Not null-terminated
+        }
+        i++;
+    }
+
+    // Check if the array ends with a NULL pointer
+    if (envp[i] != NULL)
+    {
+        fprintf(stderr, "Error: envp is not null-terminated\n");
+        return (0); // Not null-terminated
+    }
+
+    return (1); // Properly null-terminated
 }
 
 int main(int argc, char **argv, char **envp)
@@ -1417,12 +1522,14 @@ int main(int argc, char **argv, char **envp)
 		commands = parse_input(input);
 		if (commands)
 		{
-			execution(commands, mini_envp, &g_exit_status);
+			execution(commands, &mini_envp, &g_exit_status);
 			free_commands(commands);
 		}
 		else
 			printf("");
 		free(input);
+		if (!is_envp_null_terminated(mini_envp))
+			printf("it is not null terminated\n");
 	}
 	tcsetattr(STDERR_FILENO, TCSANOW, &original_term);
 	free_path(mini_envp);
