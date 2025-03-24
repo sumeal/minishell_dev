@@ -1,0 +1,104 @@
+/* ************************************************************************** */
+/*                                                                            */
+/*                                                        :::      ::::::::   */
+/*   execution_builtin.c                                :+:      :+:    :+:   */
+/*                                                    +:+ +:+         +:+     */
+/*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2025/03/24 13:48:06 by abin-moh          #+#    #+#             */
+/*   Updated: 2025/03/24 13:50:31 by abin-moh         ###   ########.fr       */
+/*                                                                            */
+/* ************************************************************************** */
+
+#include "minishell.h"
+
+int	print_echo(char **commands, int *g_exit_status)
+{
+	int	new_line;
+	int	i;
+
+	i = 1;
+	new_line = 0;
+	if (!commands[1])
+		printf("");
+	else if (ft_strcmp(commands[1], "-n") == 0)
+	{	
+		new_line = 1;
+		i = 2;
+	}
+	while (commands[i])
+	{
+		printf("%s", commands[i]);
+		if (commands[i + 1] != NULL)
+			printf(" ");
+		i++;
+	}
+	if (new_line == 0)
+		printf("\n");
+	*g_exit_status = 0;
+	return (1);
+}
+
+int	print_exit_status(int *g_exit_status)
+{
+	printf("%d\n", *g_exit_status);
+	*g_exit_status = 0;
+	return (1);
+}
+
+void	handle_directory_change(char **cmd,
+			char ***mini_envp, int *g_exit_status)
+{
+	char	*home;
+	char	cur_dir[4096];
+
+	getcwd(cur_dir, 4096);
+	if (!cmd[1])
+	{
+		home = ft_getenv("HOME", *mini_envp);
+		if (chdir(home) != 0)
+			print_error_cd(home, g_exit_status);
+	}
+	else if (ft_strcmp(cmd[1], "..") == 0)
+	{
+		if (chdir(cmd[1]) != 0)
+			print_error_cd(cmd[1], g_exit_status);
+	}
+	else if (ft_strcmp(cmd[1], "-") == 0)
+	{
+		change_to_pwd(mini_envp, g_exit_status);
+	}
+	else
+		if (chdir(cmd[1]) != 0)
+			print_error_cd(cmd[1], g_exit_status);
+}
+
+void	update_env_vars(char **mini_envp, char *cur_dir)
+{
+	char	new_dir[4096];
+
+	getcwd(new_dir, 4096);
+	update_env(cur_dir, "OLDPWD", &mini_envp);
+	update_env(new_dir, "PWD", &mini_envp);
+}
+
+void	change_directory(t_commands **commands,
+			char ***mini_envp, int *g_exit_status)
+{
+	char	**cmd;
+	char	cur_dir[4096];
+
+	*g_exit_status = 0;
+	if ((*commands)->next != NULL)
+	{
+		*commands = (*commands)->next;
+		return ;
+	}
+	getcwd(cur_dir, 4096);
+	cmd = (*commands)->args;
+	handle_directory_change(cmd, mini_envp, g_exit_status);
+	if (*g_exit_status == 0)
+	{
+		update_env_vars(*mini_envp, cur_dir);
+	}
+}

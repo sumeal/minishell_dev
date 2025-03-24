@@ -6,997 +6,546 @@
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/02/28 12:12:22 by abin-moh          #+#    #+#             */
-/*   Updated: 2025/03/23 12:16:54 by abin-moh         ###   ########.fr       */
+/*   Updated: 2025/03/24 15:27:48 by abin-moh         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
-#include "libft.h"
-#include <readline/readline.h>
-#include <readline/history.h> // Needed if using add_history()
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/wait.h>
-#include <signal.h>
-#include <termios.h>
-
-volatile sig_atomic_t	g_signal = 0;
-
-typedef struct s_mini_envp
-{
-	char				*name;
-	char				*equal;
-	char				*value;
-	struct s_mini_envp	*next;
-}	t_mini_envp;
-
-typedef struct s_exec_cmd
-{
-	int		ori_in;
-	int		ori_out;
-	int		fdin;
-	int		fdout;
-	int		pipefd[2];
-	pid_t	pid;
-	int		status;
-	int		builtin_executed;
-}	t_exec_cmd;
-
-typedef struct s_commands
-{
-	char				*cmd;
-	char				**args;
-	int					argc;
-	int					type;
-	char				*input_file;
-	char				*output_file;
-	int					input_fd;
-	int					output_fd;
-	int					append_mode;
-	int					heredoc;
-	char				*delimiter;
-	struct s_commands	*next;
-	struct s_commands	*prev;
-}	t_commands;
-
-char	*ft_getenv(char *name, char **envp)
-{
-	int		i;
-	size_t	len;
-
-	i = 0;
-	len = ft_strlen(name);
-	while (envp[i])
-	{
-		if (ft_strncmp(envp[i], name, len) == 0 && envp[i][len] == '=')
-			return (&envp[i][len + 1]);
-		i++;
-	}
-	return (NULL);
-}
-
-int	ft_strcmp(const char *s1, const char *s2)
-{
-	while (*s1 && (*s1 == *s2))
-	{
-		s1++;
-		s2++;
-	}
-	return (*(unsigned char *)s1 - *(unsigned char *)s2);
-}
-
-void	handle_signal_parent(int signum)
-{
-	if (signum == SIGINT)
-	{
-		printf("\n^C\n");
-		rl_on_new_line();
-		rl_replace_line("", 0);
-		rl_redisplay();
-		g_signal = 130;
-	}
-}
-
-void	setup_signal_handlers(struct termios *original_term, struct termios *new_term)
-{
-	tcgetattr(STDIN_FILENO, original_term);
-	*new_term = *original_term;
-	new_term->c_lflag &= ~ECHOCTL;
-	tcsetattr(STDIN_FILENO, TCSANOW, new_term);
-	signal(SIGINT, SIG_DFL);
-	signal(SIGQUIT, SIG_DFL);
-	signal(SIGINT, handle_signal_parent);
-	signal(SIGQUIT, SIG_IGN);
-}
-
-void	handle_signal_child(int signum)
-{
-	if (signum == SIGINT)
-		ft_putstr_fd("^C\n", STDOUT_FILENO);
-	else if (signum == SIGQUIT)
-		ft_putstr_fd("^\\Quit (core dumped)\n", STDOUT_FILENO);
-}
-
-void	setup_signal_child(void)
-{
-	signal(SIGINT, SIG_DFL);
-	signal(SIGQUIT, SIG_DFL);
-	signal(SIGINT, handle_signal_child);
-	signal(SIGQUIT, handle_signal_child);
-
-}
-
-
-typedef enum e_token_type
-{
-	TOKEN_WORD,
-	TOKEN_PIPE,
-	TOKEN_REDIR_IN,
-	TOKEN_REDIR_OUT,
-	TOKEN_APPEND,
-	TOKEN_HEREDOC
-}	t_token_type;
-
-typedef struct s_token
-{
-	char			*value;
-	t_token_type	type;
-	struct s_token	*next;
-}	t_token;
-
-typedef struct s_tokenizer
-{
-	char	*input;
-	int		i;
-	char	buffer[4096];
-	int		j;
-	t_token	*tokens;
-}	t_tokenizer;
-
-static int	is_whitespace(char c)
-{
-	return (c == ' ' || c == '\t' || c == '\n');
-}
-
-static t_token	*create_token(char *value, t_token_type type)
-{
-	t_token	*new_token;
-
-	new_token = (t_token *)malloc(sizeof(t_token));
-	if (!new_token)
-		return (NULL);
-	new_token->value = ft_strdup(value);
-	if (!new_token->value)
-	{
-		free(new_token);
-		return (NULL);
-	}
-	new_token->type = type;
-	new_token->next = NULL;
-	return (new_token);
-}
-
-static void	add_token(t_token **head, t_token *new_token)
-{
-	t_token	*current;
-
-	if (!*head)
-	{
-		*head = new_token;
-		return ;
-	}
-	current = *head;
-	while (current->next)
-		current = current->next;
-	current->next = new_token;
-}
-
-static int	handle_quote(char *input, int *i, char quote, char *result)
-{
-	int	j;
-
-	j = 0;
-	(*i)++;
-	while (input[*i] && input[*i] != quote)
-	{
-		result[j++] = input[*i];
-		(*i)++;
-	}
-	if (!input[*i])
-		return (-1);
-	(*i)++;
-	result[j] = '\0';
-	return (0);
-}
-
-static void	handle_whitespace(t_tokenizer *tokenizer)
-{
-	if (tokenizer->j > 0)
-	{
-		tokenizer->buffer[tokenizer->j] = '\0';
-		add_token(&tokenizer->tokens,
-			create_token(tokenizer->buffer, TOKEN_WORD));
-		tokenizer->j = 0;
-	}
-	tokenizer->i++;
-}
-
-static void	add_token_to_tokenizer(t_tokenizer *tokenizer, char *str, int type)
-{
-	add_token(&tokenizer->tokens, create_token(str, type));
-}
-
-static void	cleanup_tokens(t_tokenizer *tokenizer)
-{
-	t_token	*temp;
-
-	while (tokenizer->tokens)
-	{
-		temp = tokenizer->tokens;
-		tokenizer->tokens = tokenizer->tokens->next;
-		free(temp->value);
-		free(temp);
-	}
-}
-
-static int	handle_quotes(t_tokenizer *tokenizer)
-{
-	char	quote;
-	char	quoted_str[4096];
-
-	if (tokenizer->j > 0)
-	{
-		tokenizer->buffer[tokenizer->j] = '\0';
-		add_token_to_tokenizer(tokenizer, tokenizer->buffer, TOKEN_WORD);
-		tokenizer->j = 0;
-	}
-	quote = tokenizer->input[tokenizer->i];
-	ft_memset(quoted_str, 0, sizeof(quoted_str));
-	if (handle_quote(tokenizer->input, &tokenizer->i, quote, quoted_str) == -1)
-	{
-		cleanup_tokens(tokenizer);
-		return (-1);
-	}
-	add_token_to_tokenizer(tokenizer, quoted_str, TOKEN_WORD);
-	return (0);
-}
-
-static void	handle_pipes(t_tokenizer *tokenizer)
-{
-	if (tokenizer->j > 0)
-	{
-		tokenizer->buffer[tokenizer->j] = '\0';
-		add_token(&tokenizer->tokens,
-			create_token(tokenizer->buffer, TOKEN_WORD));
-		tokenizer->j = 0;
-	}
-	tokenizer->buffer[0] = '|';
-	tokenizer->buffer[1] = '\0';
-	add_token(&tokenizer->tokens, create_token(tokenizer->buffer, TOKEN_PIPE));
-	tokenizer->i++;
-}
-
-static void	handle_double_redirections(t_tokenizer *tokenizer)
-{
-	if (tokenizer->input[tokenizer->i] == '<'
-		&& tokenizer->input[tokenizer->i + 1] == '<')
-	{
-		tokenizer->buffer[0] = '<';
-		tokenizer->buffer[1] = '<';
-		tokenizer->buffer[2] = '\0';
-		add_token(&tokenizer->tokens,
-			create_token(tokenizer->buffer, TOKEN_HEREDOC));
-		tokenizer->i += 2;
-	}
-	else if (tokenizer->input[tokenizer->i] == '>'
-		&& tokenizer->input[tokenizer->i + 1] == '>')
-	{
-		tokenizer->buffer[0] = '>';
-		tokenizer->buffer[1] = '>';
-		tokenizer->buffer[2] = '\0';
-		add_token(&tokenizer->tokens,
-			create_token(tokenizer->buffer, TOKEN_APPEND));
-		tokenizer->i += 2;
-	}
-}
-
-static void	handle_single_redirections(t_tokenizer *tokenizer)
-{
-	if (tokenizer->input[tokenizer->i] == '<')
-	{
-		tokenizer->buffer[0] = '<';
-		tokenizer->buffer[1] = '\0';
-		add_token(&tokenizer->tokens,
-			create_token(tokenizer->buffer, TOKEN_REDIR_IN));
-		tokenizer->i++;
-	}
-	else if (tokenizer->input[tokenizer->i] == '>')
-	{
-		tokenizer->buffer[0] = '>';
-		tokenizer->buffer[1] = '\0';
-		add_token(&tokenizer->tokens,
-			create_token(tokenizer->buffer, TOKEN_REDIR_OUT));
-		tokenizer->i++;
-	}
-}
-
-static void	handle_redirections(t_tokenizer *tokenizer)
-{
-	if (tokenizer->j > 0)
-	{
-		tokenizer->buffer[tokenizer->j] = '\0';
-		add_token(&tokenizer->tokens,
-			create_token(tokenizer->buffer, TOKEN_WORD));
-		tokenizer->j = 0;
-	}
-	handle_double_redirections(tokenizer);
-	handle_single_redirections(tokenizer);
-}
-
-static void	add_final_token(t_tokenizer *tokenizer)
-{
-	if (tokenizer->j > 0)
-	{
-		tokenizer->buffer[tokenizer->j] = '\0';
-		add_token(&tokenizer->tokens,
-			create_token(tokenizer->buffer, TOKEN_WORD));
-	}
-}
-
-static void	handle_token(t_tokenizer *tokenizer)
-{
-	if (is_whitespace(tokenizer->input[tokenizer->i]))
-		handle_whitespace(tokenizer);
-	else if (tokenizer->input[tokenizer->i] == '\''
-		|| tokenizer->input[tokenizer->i] == '"')
-	{
-		if (handle_quotes(tokenizer) == -1)
-			return ;
-	}
-	else if (tokenizer->input[tokenizer->i] == '|')
-		handle_pipes(tokenizer);
-	else if (tokenizer->input[tokenizer->i] == '<'
-		|| tokenizer->input[tokenizer->i] == '>')
-		handle_redirections(tokenizer);
-	else
-		tokenizer->buffer[tokenizer->j++] = tokenizer->input[tokenizer->i++];
-}
-
-t_token	*tokenize_input(char *input)
-{
-	t_tokenizer	tokenizer;
-
-	tokenizer.input = input;
-	tokenizer.i = 0;
-	tokenizer.j = 0;
-	tokenizer.tokens = NULL;
-
-	while (tokenizer.input[tokenizer.i])
-		handle_token(&tokenizer);
-	add_final_token(&tokenizer);
-	return (tokenizer.tokens);
-}
-
-t_commands	*init_command(void)
-{
-	t_commands	*cmd;
-
-	cmd = (t_commands *)malloc(sizeof(t_commands));
-	if (!cmd)
-		return (NULL);
-	cmd->cmd = NULL;
-	cmd->args = NULL;
-	cmd->argc = 0;
-	cmd->type = 0;
-	cmd->input_file = NULL;
-	cmd->output_file = NULL;
-	cmd->input_fd = STDIN_FILENO;
-	cmd->output_fd = STDOUT_FILENO;
-	cmd->append_mode = 0;
-	cmd->heredoc = 0;
-	cmd->delimiter = NULL;
-	cmd->next = NULL;
-	cmd->prev = NULL;
-	return (cmd);
-}
-
-static int	set_command_name(t_commands *cmd, char *arg)
-{
-	if (!cmd->cmd)
-	{
-		cmd->cmd = ft_strdup(arg);
-		if (!cmd->cmd)
-			return (-1);
-	}
-	return (0);
-}
-
-static int	add_to_arguments(t_commands *cmd, char *arg)
-{
-	char	**new_args;
-	int		i;
-
-	new_args = (char **)malloc(sizeof(char *) * (cmd->argc + 2));
-	if (!new_args)
-		return (-1);
-	i = 0;
-	while (i < cmd->argc)
-	{
-		new_args[i] = cmd->args[i];
-		i++;
-	}
-	new_args[cmd->argc] = ft_strdup(arg);
-	if (!new_args[cmd->argc])
-	{
-		free(new_args);
-		return (-1);
-	}
-	new_args[cmd->argc + 1] = NULL;
-	if (cmd->args)
-		free(cmd->args);
-	cmd->args = new_args;
-	cmd->argc++;
-	return (0);
-}
-
-static int	add_argument(t_commands *cmd, char *arg)
-{
-	if (set_command_name(cmd, arg) == -1)
-		return (-1);
-	if (add_to_arguments(cmd, arg) == -1)
-		return (-1);
-	return (0);
-}
-
-static void	free_tokens(t_token *tokens)
-{
-	t_token	*temp;
-
-	while (tokens)
-	{
-		temp = tokens;
-		tokens = tokens->next;
-		if (temp->value)
-			free(temp->value);
-		free(temp);
-	}
-}
-
-void	free_commands(t_commands *commands)
-{
-	t_commands	*temp;
-	int			i;
-
-	while (commands)
-	{
-		temp = commands;
-		commands = commands->next;
-		if (temp->cmd)
-			free(temp->cmd);
-		if (temp->args)
-		{
-			i = -1;
-			while (++i < temp->argc)
-				free(temp->args[i]);
-			free(temp->args);
-		}
-		if (temp->input_file)
-			free(temp->input_file);
-		if (temp->output_file)
-			free(temp->output_file);
-		if (temp->delimiter)
-			free(temp->delimiter);
-		free(temp);
-	}
-}
-
-static t_commands	*create_new_command(t_commands **cmd_list,
-    t_commands **current_cmd)
-{
-	t_commands	*new_cmd;
-
-	new_cmd = init_command();
-	if (!new_cmd)
-		return (NULL);
-	if (!*cmd_list)
-	{
-		*cmd_list = new_cmd;
-		*current_cmd = new_cmd;
-		return (new_cmd);
-	}
-	(*current_cmd)->next = new_cmd;
-	new_cmd->prev = *current_cmd;
-	*current_cmd = new_cmd;
-	return (new_cmd);
-}
-
-static int	handle_redirection(t_commands *current_cmd, t_token **current)
-{
-	if ((*current)->type == TOKEN_REDIR_IN)
-	{
-		if (!(*current)->next || (*current)->next->type != TOKEN_WORD)
-			return (-1);
-		if (current_cmd->input_file)
-			free(current_cmd->input_file);
-		current_cmd->input_file = ft_strdup((*current)->next->value);
-		*current = (*current)->next;
-		return (0);
-	}
-	if ((*current)->type == TOKEN_REDIR_OUT
-		|| (*current)->type == TOKEN_APPEND)
-	{
-		if (!(*current)->next || (*current)->next->type != TOKEN_WORD)
-			return (-1);
-		if (current_cmd->output_file)
-			free(current_cmd->output_file);
-		current_cmd->output_file = ft_strdup((*current)->next->value);
-		current_cmd->append_mode = ((*current)->type == TOKEN_APPEND);
-		*current = (*current)->next;
-		return (0);
-	}
-	return (0);
-}
-
-static int	handle_heredoc(t_commands *current_cmd, t_token **current)
-{
-	if ((*current)->type != TOKEN_HEREDOC)
-		return (0);
-	if (!(*current)->next || (*current)->next->type != TOKEN_WORD)
-		return (-1);
-	current_cmd->heredoc = 1;
-	if (current_cmd->delimiter)
-		free(current_cmd->delimiter);
-	current_cmd->delimiter = ft_strdup((*current)->next->value);
-	*current = (*current)->next;
-	return (0);
-}
-
-static void	handle_error(t_commands **cmd_list)
-{
-	if (*cmd_list)
-		free_commands(*cmd_list);
-}
-
-static int	initialize_command(t_commands **cmd_list, t_commands **current_cmd,
-    t_token **current)
-{
-	if (!*cmd_list || (*current)->type == TOKEN_PIPE)
-	{
-		if ((*current)->type == TOKEN_PIPE)
-		{
-			if (!(*current = (*current)->next))
-				handle_error(cmd_list);
-				return (-1);
-		}
-		if (!create_new_command(cmd_list, current_cmd))
-		{
-			handle_error(cmd_list);
-			return (-1);
-		}
-	}
-	return (0);
-}
-
-static int	process_token(t_commands **cmd_list, t_commands **current_cmd,
-    t_token **current)
-{
-	if ((*current)->type == TOKEN_WORD)
-	{
-		if (add_argument(*current_cmd, (*current)->value) < 0)
-		{
-			handle_error(cmd_list);
-			return (-1);
-		}
-	}
-	else if (handle_redirection(*current_cmd, current) < 0)
-	{
-		handle_error(cmd_list);
-		return (-1);
-	}
-	else if (handle_heredoc(*current_cmd, current) < 0)
-	{
-		handle_error(cmd_list);
-		return (-1);
-	}
-	return (0);
-}
-
-t_commands	*parse_tokens(t_token *tokens)
-{
-	t_commands	*cmd_list;
-	t_commands	*current_cmd;
-	t_token		*current;
-
-	cmd_list = NULL;
-	current = NULL;
-	current = tokens;
-	while (current)
-	{
-		if (initialize_command(&cmd_list, &current_cmd, &current) < 0)
-			return (NULL);
-		if (process_token(&cmd_list, &current_cmd, &current) < 0)
-			return (NULL);
-		current = current->next;
-	}
-	return (cmd_list);
-}
-
-t_commands	*parse_input(char *input)
-{
-	t_token		*tokens;
-	t_commands	*commands;
-
-	tokens = tokenize_input(input);
-	if (!tokens)
-		return (NULL);
-	commands = parse_tokens(tokens);
-	free_tokens(tokens);
-	return (commands);
-}
-
-int	print_error(char *s, int exit)
-{
-	perror(s);
-	return (exit);
-}
-
-void	free_path(char **paths)
-{
-	int	i;
-
-	i = -1;
-	while (paths[++i])
-		free(paths[i]);
-	free(paths);
-}
-
-char	*get_path(char *cmd, char **envp)
-{
-	char	*part_path;
-	char	**paths;
-	char	*path;
-	int		i;
-
-	i = 0;
-	while (ft_strnstr(envp[i], "PATH=", 5) == NULL)
-		i++;
-	paths = ft_split(envp[i] + 5, ':');
-	i = -1;
-	while (paths[++i])
-	{
-		part_path = ft_strjoin(paths[i], "/");
-		path = ft_strjoin(part_path, cmd);
-		free(part_path);
-		if (!path)
-			break ;
-		if (access(path, F_OK) == 0)
-			return (path);
-		free(path);
-	}
-	free_path(paths);
-	return (NULL);
-}
-
-int setup_input(t_commands *cmd, t_exec_cmd *vars)
-{
-	if (cmd->input_file)
-	{
-		vars->fdin = open(cmd->input_file, O_RDONLY);
-		if (vars->fdin < 0)
-			return (print_error("open", -1));
-	}
-	else
-		vars->fdin = dup(vars->ori_in);
-	return (0);
-}
-
-int	handle_last_command_output(t_commands *cmd, t_exec_cmd *vars)
-{
-	int	flags;
-
-	flags = O_WRONLY | O_CREAT;
-	if (cmd->append_mode)
-		flags |= O_APPEND;
-	else
-		flags |= O_TRUNC;
-	vars->fdout = open(cmd->output_file, flags, 0644);
-	if (vars->fdout < 0)
-		return (print_error("open", -1));
-	return (0);
-}
-
-int	handle_piped_command_output(t_exec_cmd *vars)
-{
-	if (pipe(vars->pipefd) == -1) //pipe process
-		return (print_error("pipe", -1));
-	vars->fdout = vars->pipefd[1];
-	vars->fdin = vars->pipefd[0];
-	return (0);
-}
-
-int	setup_output(t_commands *cmd, t_exec_cmd *vars)
-{
-	//if its the last cmd, check to print at outfile or terminal
-	if (cmd->next == NULL)
-	{
-		if (cmd->output_file)
-		{
-			if (handle_last_command_output(cmd, vars) < 0)
-				return (-1);
-		}
-		else
-			vars->fdout = dup(vars->ori_out);
-
-	}
-	else //if not pipe the output to the next cmd
-		if (handle_piped_command_output(vars) < 0)
-			return (-1);
-	return (0);
-}
-
-int	execute_command(t_commands *cmd, t_exec_cmd *vars, char **envp, int *g_exit_status)
-{
-	char	*path;
-
-	setup_signal_child();
-	vars->pid = fork();
-	if (vars->pid == 0)
-	{
-		path = get_path(cmd->cmd, envp);
-		if (path == NULL)
-		{
-			printf("%s: command not found\n", cmd->cmd);
-			exit(127);
-		}
-		execve(path, cmd->args, envp);
-		perror("execve");
-		exit(EXIT_FAILURE);
-	}
-	else if (vars->pid < 0)
-		return (print_error("fork", -1));
-	return (0);
-}
-
-void	save_original_fd(t_exec_cmd *vars)
-{
-	vars->status = 0;
-	vars->builtin_executed = 0;
-	vars->ori_in = dup(STDIN_FILENO);
-	vars->ori_out = dup(STDOUT_FILENO);
-}
-
-void	restore_original_fd(t_exec_cmd *vars)
-{
-	dup2(vars->ori_in, STDIN_FILENO);
-	dup2(vars->ori_out, STDOUT_FILENO);
-	close(vars->ori_in);
-	close(vars->ori_out);
-}
-
-void	set_exit_status(t_exec_cmd *vars, int *g_exit_status)
-{
-	if (WIFEXITED(vars->status))
-		*g_exit_status = WEXITSTATUS(vars->status);
-	else if (WIFSIGNALED(vars->status))
-		*g_exit_status = 128 + WTERMSIG(vars->status);
-	else
-		*g_exit_status = 127;
-}
-
-int	print_env(t_commands **cmd_list, char **envp, int *g_exit_status)
-{
-	int		i;
-	char	*have;
-
-	i = 0;
-	while (envp[i])
-	{
-		have = ft_strchr(envp[i], '=');
-		if (have)
-			printf("%s\n", envp[i]);
-		i++;
-	}
-	*g_exit_status = 0;
-	return (1);
-}
-
-int	print_pwd(char **envp, int *g_exit_status)
-{
-	char	*pwd;
-
-	pwd = ft_getenv("PWD", envp);
-	printf("%s\n", pwd);
-	*g_exit_status = 0;
-	return (1);
-}
-
-int	print_echo(char **commands, int *g_exit_status)
-{
-	int	new_line;
-	int	i;
-
-	i = 1;
-	new_line = 0;
-	if (!commands[1])
-		printf("");
-	else if (ft_strcmp(commands[1], "-n") == 0)
-	{	
-		new_line = 1;
-		i = 2;
-	}
-	while (commands[i])
-	{
-		printf("%s", commands[i]);
-		if (commands[i + 1] != NULL)
-			printf(" ");
-		i++;
-	}
-	if (new_line == 0)
-		printf("\n");
-	*g_exit_status = 0;
-	return (1);
-}
-
-int	count_envp(char **envp)
-{
-	int	count;
-
-	count = 0;
-	while (envp[count])
-		count++;
-	return (count);
-}
-
-char	*get_var_name(char *envp)
-{
-	char	*pos;
-
-	pos = ft_strchr(envp, '=');
-	if (!pos)
-		return (NULL);
-	return (ft_substr(envp, 0, pos - envp));
-}
-
-static int	is_valid_variable_name(const char *name)
-{
-	if (!name || !*name)
-		return (0);
-	if (!ft_isalpha(*name) && *name != '_')
-		return (0);
-	while (*++name)
-		if (!ft_isalnum(*name) && *name != '_')
-			return (0);
-	return (1);
-}
-
-static int	find_variable(char *args, char **envp)
-{
-	int		i;
-	char	*name1;
-	char	*name2;
-
-	name1 = get_var_name(args);
-	i = 0;
-	while (envp[i])
-	{
-		name2 = get_var_name(envp[i]);
-		if (name1 && name2 && ft_strcmp(name1, name2) == 0)
-		{
-			free(name1);
-			free(name2);
-			return (i);
-		}
-		free(name2);
-		i++;
-	}
-	free(name1);
-	return (-1);
-}
-
-static void add_new_variable(char ***envp, char **new_var)
-{
-    int		count;
-    char	**new_envp;
-    int		i;
-
-    count = count_envp(*envp);
-    new_envp = ft_calloc(count + 2, sizeof(char *));
-    if (!new_envp)
-    {
-        free(new_var);
-        return ;
-    }
-    i = 0;
-    while (i < count)
-    {
-        new_envp[i] = ft_strdup((*envp)[i]);
-        i++;
-    }
-	free(new_envp[i]);
-    new_envp[i] = *new_var;
-    new_envp[i + 1] = NULL;
-	free_path(*envp);
-    *envp = new_envp;
-}
-
-
-int	check_valid_value(char *s)
-{
-	int	i;
-
-	i = 0;
-	while (s[i])
-	{
-		if (!(ft_isalnum(s[i]) != 0 || s[i] == '_' || s[i] == '='))
-		{
-			ft_putstr_fd("bash: ", STDERR_FILENO);
-			ft_putstr_fd(s + i, STDERR_FILENO);
-			ft_putstr_fd(": event not found\n", STDERR_FILENO);
-			return (-1);
-		}
-		i++;
-	}
-	return (0);
-}
-
-char *change_format(char *args)
-{
-    char	*ret;
-    int		i;
-	int		j;
-	char	*have;
-
-    have = ft_strchr(args, '=');
-    if (!have)
-        return (ft_strdup(args));
-    ret = malloc(sizeof(char) * (ft_strlen(args) + 3));
-    if (!ret)
-        return (NULL);
-    i = 0;
-    while (args[i] != '=' && args[i] != '\0') {
-        ret[i] = args[i];
-        i++;
-    }
-	ret[i++] = '=';
-	j = i;
-    ret[i++] = '"';
-    while (args[j] != '\0')
-		ret[i++] = args[j++];
-    ret[i] = '"';
-    ret[i + 1] = '\0';
-    return (ret);
-}
-
-
-int	add_variable_to_env(char ***envp, char **args)
-{
-    int i;
-    int index;
-    char *tmp;
-    char *new;
-
-    i = 1;
-    while (args[i])
-    {
-        if (check_valid_value(args[i]) < 0)
-            return (0);
-                index = find_variable(args[i], *envp);
-        new = ft_strdup(args[i]);
-        if (!new)
-            return (0);
-        if (index >= 0)
-        {
-            free((*envp)[index]);
-            (*envp)[index] = new;
-        }
-        else
-            add_new_variable(envp, &new);
-        i++;
-    }
-	return (1);
-}
-
+#include "minishell.h"
+
+volatile sig_atomic_t g_signal = 0;
+
+// typedef enum e_token_type
+// {
+// 	TOKEN_WORD,
+// 	TOKEN_PIPE,
+// 	TOKEN_REDIR_IN,
+// 	TOKEN_REDIR_OUT,
+// 	TOKEN_APPEND,
+// 	TOKEN_HEREDOC
+// }	t_token_type;
+
+// typedef struct s_token
+// {
+// 	char			*value;
+// 	t_token_type	type;
+// 	struct s_token	*next;
+// }	t_token;
+
+// typedef struct s_tokenizer
+// {
+// 	char	*input;
+// 	int		i;
+// 	char	buffer[4096];
+// 	int		j;
+// 	t_token	*tokens;
+// }	t_tokenizer;
+
+// static int	is_whitespace(char c)
+// {
+// 	return (c == ' ' || c == '\t' || c == '\n');
+// }
+
+// static t_token	*create_token(char *value, t_token_type type)
+// {
+// 	t_token	*new_token;
+
+// 	new_token = (t_token *)malloc(sizeof(t_token));
+// 	if (!new_token)
+// 		return (NULL);
+// 	new_token->value = ft_strdup(value);
+// 	if (!new_token->value)
+// 	{
+// 		free(new_token);
+// 		return (NULL);
+// 	}
+// 	new_token->type = type;
+// 	new_token->next = NULL;
+// 	return (new_token);
+// }
+
+// static void	add_token(t_token **head, t_token *new_token)
+// {
+// 	t_token	*current;
+
+// 	if (!*head)
+// 	{
+// 		*head = new_token;
+// 		return ;
+// 	}
+// 	current = *head;
+// 	while (current->next)
+// 		current = current->next;
+// 	current->next = new_token;
+// }
+
+// static int	handle_quote(char *input, int *i, char quote, char *result)
+// {
+// 	int	j;
+
+// 	j = 0;
+// 	(*i)++;
+// 	while (input[*i] && input[*i] != quote)
+// 	{
+// 		result[j++] = input[*i];
+// 		(*i)++;
+// 	}
+// 	if (!input[*i])
+// 		return (-1);
+// 	(*i)++;
+// 	result[j] = '\0';
+// 	return (0);
+// }
+
+// static void	handle_whitespace(t_tokenizer *tokenizer)
+// {
+// 	if (tokenizer->j > 0)
+// 	{
+// 		tokenizer->buffer[tokenizer->j] = '\0';
+// 		add_token(&tokenizer->tokens,
+// 			create_token(tokenizer->buffer, TOKEN_WORD));
+// 		tokenizer->j = 0;
+// 	}
+// 	tokenizer->i++;
+// }
+
+// static void	add_token_to_tokenizer(t_tokenizer *tokenizer, char *str, int type)
+// {
+// 	add_token(&tokenizer->tokens, create_token(str, type));
+// }
+
+// static void	cleanup_tokens(t_tokenizer *tokenizer)
+// {
+// 	t_token	*temp;
+
+// 	while (tokenizer->tokens)
+// 	{
+// 		temp = tokenizer->tokens;
+// 		tokenizer->tokens = tokenizer->tokens->next;
+// 		free(temp->value);
+// 		free(temp);
+// 	}
+// }
+
+// static int	handle_quotes(t_tokenizer *tokenizer)
+// {
+// 	char	quote;
+// 	char	quoted_str[4096];
+
+// 	if (tokenizer->j > 0)
+// 	{
+// 		tokenizer->buffer[tokenizer->j] = '\0';
+// 		add_token_to_tokenizer(tokenizer, tokenizer->buffer, TOKEN_WORD);
+// 		tokenizer->j = 0;
+// 	}
+// 	quote = tokenizer->input[tokenizer->i];
+// 	ft_memset(quoted_str, 0, sizeof(quoted_str));
+// 	if (handle_quote(tokenizer->input, &tokenizer->i, quote, quoted_str) == -1)
+// 	{
+// 		cleanup_tokens(tokenizer);
+// 		return (-1);
+// 	}
+// 	add_token_to_tokenizer(tokenizer, quoted_str, TOKEN_WORD);
+// 	return (0);
+// }
+
+// static void	handle_pipes(t_tokenizer *tokenizer)
+// {
+// 	if (tokenizer->j > 0)
+// 	{
+// 		tokenizer->buffer[tokenizer->j] = '\0';
+// 		add_token(&tokenizer->tokens,
+// 			create_token(tokenizer->buffer, TOKEN_WORD));
+// 		tokenizer->j = 0;
+// 	}
+// 	tokenizer->buffer[0] = '|';
+// 	tokenizer->buffer[1] = '\0';
+// 	add_token(&tokenizer->tokens, create_token(tokenizer->buffer, TOKEN_PIPE));
+// 	tokenizer->i++;
+// }
+
+// static void	handle_double_redirections(t_tokenizer *tokenizer)
+// {
+// 	if (tokenizer->input[tokenizer->i] == '<'
+// 		&& tokenizer->input[tokenizer->i + 1] == '<')
+// 	{
+// 		tokenizer->buffer[0] = '<';
+// 		tokenizer->buffer[1] = '<';
+// 		tokenizer->buffer[2] = '\0';
+// 		add_token(&tokenizer->tokens,
+// 			create_token(tokenizer->buffer, TOKEN_HEREDOC));
+// 		tokenizer->i += 2;
+// 	}
+// 	else if (tokenizer->input[tokenizer->i] == '>'
+// 		&& tokenizer->input[tokenizer->i + 1] == '>')
+// 	{
+// 		tokenizer->buffer[0] = '>';
+// 		tokenizer->buffer[1] = '>';
+// 		tokenizer->buffer[2] = '\0';
+// 		add_token(&tokenizer->tokens,
+// 			create_token(tokenizer->buffer, TOKEN_APPEND));
+// 		tokenizer->i += 2;
+// 	}
+// }
+
+// static void	handle_single_redirections(t_tokenizer *tokenizer)
+// {
+// 	if (tokenizer->input[tokenizer->i] == '<')
+// 	{
+// 		tokenizer->buffer[0] = '<';
+// 		tokenizer->buffer[1] = '\0';
+// 		add_token(&tokenizer->tokens,
+// 			create_token(tokenizer->buffer, TOKEN_REDIR_IN));
+// 		tokenizer->i++;
+// 	}
+// 	else if (tokenizer->input[tokenizer->i] == '>')
+// 	{
+// 		tokenizer->buffer[0] = '>';
+// 		tokenizer->buffer[1] = '\0';
+// 		add_token(&tokenizer->tokens,
+// 			create_token(tokenizer->buffer, TOKEN_REDIR_OUT));
+// 		tokenizer->i++;
+// 	}
+// }
+
+// static void	handle_redirections(t_tokenizer *tokenizer)
+// {
+// 	if (tokenizer->j > 0)
+// 	{
+// 		tokenizer->buffer[tokenizer->j] = '\0';
+// 		add_token(&tokenizer->tokens,
+// 			create_token(tokenizer->buffer, TOKEN_WORD));
+// 		tokenizer->j = 0;
+// 	}
+// 	handle_double_redirections(tokenizer);
+// 	handle_single_redirections(tokenizer);
+// }
+
+// static void	add_final_token(t_tokenizer *tokenizer)
+// {
+// 	if (tokenizer->j > 0)
+// 	{
+// 		tokenizer->buffer[tokenizer->j] = '\0';
+// 		add_token(&tokenizer->tokens,
+// 			create_token(tokenizer->buffer, TOKEN_WORD));
+// 	}
+// }
+
+// static void	handle_token(t_tokenizer *tokenizer)
+// {
+// 	if (is_whitespace(tokenizer->input[tokenizer->i]))
+// 		handle_whitespace(tokenizer);
+// 	else if (tokenizer->input[tokenizer->i] == '\''
+// 		|| tokenizer->input[tokenizer->i] == '"')
+// 	{
+// 		if (handle_quotes(tokenizer) == -1)
+// 			return ;
+// 	}
+// 	else if (tokenizer->input[tokenizer->i] == '|')
+// 		handle_pipes(tokenizer);
+// 	else if (tokenizer->input[tokenizer->i] == '<'
+// 		|| tokenizer->input[tokenizer->i] == '>')
+// 		handle_redirections(tokenizer);
+// 	else
+// 		tokenizer->buffer[tokenizer->j++] = tokenizer->input[tokenizer->i++];
+// }
+
+// t_token	*tokenize_input(char *input)
+// {
+// 	t_tokenizer	tokenizer;
+
+// 	tokenizer.input = input;
+// 	tokenizer.i = 0;
+// 	tokenizer.j = 0;
+// 	tokenizer.tokens = NULL;
+
+// 	while (tokenizer.input[tokenizer.i])
+// 		handle_token(&tokenizer);
+// 	add_final_token(&tokenizer);
+// 	return (tokenizer.tokens);
+// }
+
+// t_commands	*init_command(void)
+// {
+// 	t_commands	*cmd;
+
+// 	cmd = (t_commands *)malloc(sizeof(t_commands));
+// 	if (!cmd)
+// 		return (NULL);
+// 	cmd->cmd = NULL;
+// 	cmd->args = NULL;
+// 	cmd->argc = 0;
+// 	cmd->type = 0;
+// 	cmd->input_file = NULL;
+// 	cmd->output_file = NULL;
+// 	cmd->input_fd = STDIN_FILENO;
+// 	cmd->output_fd = STDOUT_FILENO;
+// 	cmd->append_mode = 0;
+// 	cmd->heredoc = 0;
+// 	cmd->delimiter = NULL;
+// 	cmd->next = NULL;
+// 	cmd->prev = NULL;
+// 	return (cmd);
+// }
+
+// static int	set_command_name(t_commands *cmd, char *arg)
+// {
+// 	if (!cmd->cmd)
+// 	{
+// 		cmd->cmd = ft_strdup(arg);
+// 		if (!cmd->cmd)
+// 			return (-1);
+// 	}
+// 	return (0);
+// }
+
+// static int	add_to_arguments(t_commands *cmd, char *arg)
+// {
+// 	char	**new_args;
+// 	int		i;
+
+// 	new_args = (char **)malloc(sizeof(char *) * (cmd->argc + 2));
+// 	if (!new_args)
+// 		return (-1);
+// 	i = 0;
+// 	while (i < cmd->argc)
+// 	{
+// 		new_args[i] = cmd->args[i];
+// 		i++;
+// 	}
+// 	new_args[cmd->argc] = ft_strdup(arg);
+// 	if (!new_args[cmd->argc])
+// 	{
+// 		free(new_args);
+// 		return (-1);
+// 	}
+// 	new_args[cmd->argc + 1] = NULL;
+// 	if (cmd->args)
+// 		free(cmd->args);
+// 	cmd->args = new_args;
+// 	cmd->argc++;
+// 	return (0);
+// }
+
+// static int	add_argument(t_commands *cmd, char *arg)
+// {
+// 	if (set_command_name(cmd, arg) == -1)
+// 		return (-1);
+// 	if (add_to_arguments(cmd, arg) == -1)
+// 		return (-1);
+// 	return (0);
+// }
+
+// static void	free_tokens(t_token *tokens)
+// {
+// 	t_token	*temp;
+
+// 	while (tokens)
+// 	{
+// 		temp = tokens;
+// 		tokens = tokens->next;
+// 		if (temp->value)
+// 			free(temp->value);
+// 		free(temp);
+// 	}
+// }
+
+// void	free_commands(t_commands *commands)
+// {
+// 	t_commands	*temp;
+// 	int			i;
+
+// 	while (commands)
+// 	{
+// 		temp = commands;
+// 		commands = commands->next;
+// 		if (temp->cmd)
+// 			free(temp->cmd);
+// 		if (temp->args)
+// 		{
+// 			i = -1;
+// 			while (++i < temp->argc)
+// 				free(temp->args[i]);
+// 			free(temp->args);
+// 		}
+// 		if (temp->input_file)
+// 			free(temp->input_file);
+// 		if (temp->output_file)
+// 			free(temp->output_file);
+// 		if (temp->delimiter)
+// 			free(temp->delimiter);
+// 		free(temp);
+// 	}
+// }
+
+// static t_commands	*create_new_command(t_commands **cmd_list,
+//     t_commands **current_cmd)
+// {
+// 	t_commands	*new_cmd;
+
+// 	new_cmd = init_command();
+// 	if (!new_cmd)
+// 		return (NULL);
+// 	if (!*cmd_list)
+// 	{
+// 		*cmd_list = new_cmd;
+// 		*current_cmd = new_cmd;
+// 		return (new_cmd);
+// 	}
+// 	(*current_cmd)->next = new_cmd;
+// 	new_cmd->prev = *current_cmd;
+// 	*current_cmd = new_cmd;
+// 	return (new_cmd);
+// }
+
+// static int	handle_redirection(t_commands *current_cmd, t_token **current)
+// {
+// 	if ((*current)->type == TOKEN_REDIR_IN)
+// 	{
+// 		if (!(*current)->next || (*current)->next->type != TOKEN_WORD)
+// 			return (-1);
+// 		if (current_cmd->input_file)
+// 			free(current_cmd->input_file);
+// 		current_cmd->input_file = ft_strdup((*current)->next->value);
+// 		*current = (*current)->next;
+// 		return (0);
+// 	}
+// 	if ((*current)->type == TOKEN_REDIR_OUT
+// 		|| (*current)->type == TOKEN_APPEND)
+// 	{
+// 		if (!(*current)->next || (*current)->next->type != TOKEN_WORD)
+// 			return (-1);
+// 		if (current_cmd->output_file)
+// 			free(current_cmd->output_file);
+// 		current_cmd->output_file = ft_strdup((*current)->next->value);
+// 		current_cmd->append_mode = ((*current)->type == TOKEN_APPEND);
+// 		*current = (*current)->next;
+// 		return (0);
+// 	}
+// 	return (0);
+// }
+
+// static int	handle_heredoc(t_commands *current_cmd, t_token **current)
+// {
+// 	if ((*current)->type != TOKEN_HEREDOC)
+// 		return (0);
+// 	if (!(*current)->next || (*current)->next->type != TOKEN_WORD)
+// 		return (-1);
+// 	current_cmd->heredoc = 1;
+// 	if (current_cmd->delimiter)
+// 		free(current_cmd->delimiter);
+// 	current_cmd->delimiter = ft_strdup((*current)->next->value);
+// 	*current = (*current)->next;
+// 	return (0);
+// }
+
+// static void	handle_error(t_commands **cmd_list)
+// {
+// 	if (*cmd_list)
+// 		free_commands(*cmd_list);
+// }
+
+// static int	initialize_command(t_commands **cmd_list, t_commands **current_cmd,
+//     t_token **current)
+// {
+// 	if (!*cmd_list || (*current)->type == TOKEN_PIPE)
+// 	{
+// 		if ((*current)->type == TOKEN_PIPE)
+// 		{
+// 			if (!(*current = (*current)->next))
+// 				handle_error(cmd_list);
+// 				return (-1);
+// 		}
+// 		if (!create_new_command(cmd_list, current_cmd))
+// 		{
+// 			handle_error(cmd_list);
+// 			return (-1);
+// 		}
+// 	}
+// 	return (0);
+// }
+
+// static int	process_token(t_commands **cmd_list, t_commands **current_cmd,
+//     t_token **current)
+// {
+// 	if ((*current)->type == TOKEN_WORD)
+// 	{
+// 		if (add_argument(*current_cmd, (*current)->value) < 0)
+// 		{
+// 			handle_error(cmd_list);
+// 			return (-1);
+// 		}
+// 	}
+// 	else if (handle_redirection(*current_cmd, current) < 0)
+// 	{
+// 		handle_error(cmd_list);
+// 		return (-1);
+// 	}
+// 	else if (handle_heredoc(*current_cmd, current) < 0)
+// 	{
+// 		handle_error(cmd_list);
+// 		return (-1);
+// 	}
+// 	return (0);
+// }
+
+// t_commands	*parse_tokens(t_token *tokens)
+// {
+// 	t_commands	*cmd_list;
+// 	t_commands	*current_cmd;
+// 	t_token		*current;
+
+// 	cmd_list = NULL;
+// 	current = NULL;
+// 	current = tokens;
+// 	while (current)
+// 	{
+// 		if (initialize_command(&cmd_list, &current_cmd, &current) < 0)
+// 			return (NULL);
+// 		if (process_token(&cmd_list, &current_cmd, &current) < 0)
+// 			return (NULL);
+// 		current = current->next;
+// 	}
+// 	return (cmd_list);
+// }
+
+// t_commands	*parse_input(char *input)
+// {
+// 	t_token		*tokens;
+// 	t_commands	*commands;
+
+// 	tokens = tokenize_input(input);
+// 	if (!tokens)
+// 		return (NULL);
+// 	commands = parse_tokens(tokens);
+// 	free_tokens(tokens);
+// 	return (commands);
+// }
+
+// void print_parsed_commands(t_commands *cmd_list)
+// {
+//     int i;
+
+//     printf("Parsed Commands:\n");
+//     while (cmd_list)
+//     {
+//         printf("Command: %s\n", cmd_list->cmd ? cmd_list->cmd : "(null)");
+//         printf("Arguments:\n");
+//         for (i = 0; i < cmd_list->argc; i++)
+//         {
+//             printf("  [%d]: %s\n", i, cmd_list->args[i]);
+//         }
+//         printf("Input File: %s\n", cmd_list->input_file ? cmd_list->input_file : "(none)");
+//         printf("Output File: %s\n", cmd_list->output_file ? cmd_list->output_file : "(none)");
+//         printf("Append Mode: %s\n", cmd_list->append_mode ? "Yes" : "No");
+//         printf("Heredoc: %s\n", cmd_list->heredoc ? "Yes" : "No");
+//         printf("Delimiter: %s\n", cmd_list->delimiter ? cmd_list->delimiter : "(none)");
+//         printf("Type: %d\n", cmd_list->type);
+//         printf("Next Command: %s\n", cmd_list->next ? cmd_list->next->cmd : "(none)");
+//         printf("Previous Command: %s\n", cmd_list->prev ? cmd_list->prev->cmd : "(none)");
+//         printf("-----------------------------\n");
+//         cmd_list = cmd_list->next;
+//     }
+// }
 
 char	**copy_envp(char **envp)
 {
@@ -1014,484 +563,6 @@ char	**copy_envp(char **envp)
 	return (copy);
 }
 
-int	skip(char *envp1, char *envp2)
-{
-	if (!envp1 || !envp2)
-		return (1);
-	if (ft_strncmp(envp1, "_=", 2) == 0 || ft_strncmp(envp2, "_=", 2) == 0)
-		return (1);
-	return (0);
-}
-
-void	swap_envp(char **envp, int i, int j)
-{
-	char	*temp;
-
-	temp = envp[i];
-	envp[i] = envp[j];
-	envp[j] = temp;
-}
-
-void	sort_env(char **envp)
-{
-	int		i;
-	int		j;
-	int		count;
-	char	*name1;
-	char	*name2;
-
-	count = count_envp(envp);
-	i = -1;
-	while (++i < count - 1)
-	{
-		j = -1;
-		while (++j < count - i - 1)
-		{
-			if (skip(envp[j], envp[j + 1]) == 0)
-			{
-				name1 = get_var_name(envp[j]);
-				name2 = get_var_name(envp[j + 1]);
-				if (name1 && name2 && ft_strcmp(name1, name2) > 0)
-					swap_envp(envp, j, j + 1);
-				free(name1);
-				free(name2);
-			}
-		}
-	}
-}
-
-char	**duplicate_env_array(char **envp)
-{
-	char	**copy;
-	int		i;
-	int		count;
-
-	i = 0;
-	count = count_envp(envp);
-	copy = (char **)malloc(sizeof(char *) * (count + 1));
-	if (!copy)
-		return (NULL);
-	while (i < count)
-	{
-		copy[i] = ft_strdup(change_format(envp[i]));
-		if (!copy[i])
-		{
-			free_path(copy);
-			return (NULL);
-		}
-		i++;
-	}
-	copy[count] = NULL;
-	return (copy);
-}
-
-void print_sorted_envp(char **envp)
-{
-	char	**copy;
-	int		i;
-
-	copy = duplicate_env_array(envp);
-	if (!copy)
-		return ;
-	sort_env(copy);
-	i = 0;
-	while (copy[i])
-	{
-		if (ft_strncmp(copy[i], "_=", 2) != 0)
-		{
-			ft_putstr_fd("declare -x ", STDOUT_FILENO);
-			ft_putstr_fd(copy[i], STDOUT_FILENO);
-			ft_putchar_fd('\n', STDOUT_FILENO);
-		}
-		i++;
-	}
-	free_path(copy);
-}
-
-void export_variable(char **args, char ***envp, int *g_exit_status)
-{
-	int	ret_val;
-
-	if (!args[1])
-	{
-		print_sorted_envp(*envp);
-		*g_exit_status = 0;
-		return ;
-	}
-	else
-	{
-		ret_val = add_variable_to_env(envp, args);
-		if (ret_val)
-			*g_exit_status = 0;
-	}
-}
-
-static int	find_index(char *var, char **envp)
-{
-	int		i;
-	size_t	len;
-
-	len = ft_strlen(var);
-	i = 0;
-	while (envp[i])
-	{
-		if (ft_strncmp(envp[i], var, len) == 0
-			&& (envp[i][len] == '=' || envp[i][len] == '\0'))
-			return (i);
-		i++;
-	}
-	return (-1);
-}
-
-void	unset_variable(char *var, char ***envp)
-{
-	int	index;
-	int	j;
-
-	if (!var)
-	{
-		ft_putstr_fd("unset: missing argument\n", 2);
-		return ;
-	}
-	index = find_index(var, *envp);
-	if (index >= 0)
-	{
-		free((*envp)[index]);
-		j = index;
-		while ((*envp)[j])
-		{
-			(*envp)[j] = (*envp)[j + 1];
-			j++;
-		}
-	}
-}
-
-char	*ft_strcpy(char *dest, char *src)
-{
-	int	i;
-
-	i = -1;
-	while (src[++i])
-		dest[i] = src[i];
-	dest[i] = '\0';
-	return (dest);
-}
-
-char	*ft_strcat(char *dest, char *src)
-{
-	int	i;
-	int	j;
-
-	i = 0;
-	j = 0;
-	while (dest[i])
-		i++;
-	while (src[j])
-		dest[i++] = src[j++];
-	dest[i] = '\0';
-	return (dest);
-}
-
-void	update_env(char *dir, char *name, char ***mini_envp)
-{
-	char	*new;
-	int		i;
-
-	i = 0;
-	new = malloc(sizeof(char) * (ft_strlen(dir) + ft_strlen(name) + 2));
-	if (!new)
-		return ;
-	ft_strcpy(new, name);
-	ft_strcat(new, "=");
-	ft_strcat(new, dir);
-	while ((*mini_envp)[i])
-	{
-		if (ft_strncmp((*mini_envp)[i], name, ft_strlen(name)) == 0)
-		{
-			free((*mini_envp)[i]);
-			(*mini_envp)[i] = new;
-			return ;
-		}
-		i++;
-	}
-}
-
-void	print_error_cd(char *failed_cmd, int *g_exit_status)
-{
-	ft_putstr_fd("bash: cd: ", STDERR_FILENO);
-	ft_putstr_fd(failed_cmd, STDERR_FILENO);
-	ft_putstr_fd(": ", STDERR_FILENO);
-	perror("");
-	*g_exit_status = 1;
-}
-
-void	change_to_pwd(char ***mini_envp, int *g_exit_status)
-{
-	char	*home;
-
-	home = ft_getenv("OLDPWD", *mini_envp);
-	if (home)
-	{
-		printf("%s\n", home);
-		if (chdir(home) != 0)
-			print_error_cd(home, g_exit_status);
-	}
-	else
-	{
-		ft_putstr_fd("bash: cd: OLDPWD not set\n", STDERR_FILENO);
-		*g_exit_status = 1;
-	}
-}
-
-void handle_directory_change(char **cmd, char ***mini_envp, int *g_exit_status)
-{
-	char	*home;
-	char	cur_dir[4096];
-
-	getcwd(cur_dir, 4096);
-	if (!cmd[1])
-	{
-		home = ft_getenv("HOME", *mini_envp);
-		if (chdir(home) != 0)
-			print_error_cd(home, g_exit_status);
-	}
-	else if (ft_strcmp(cmd[1], "..") == 0)
-	{
-		if (chdir(cmd[1]) != 0)
-			print_error_cd(cmd[1], g_exit_status);
-	}
-	else if (ft_strcmp(cmd[1], "-") == 0)
-	{
-		change_to_pwd(mini_envp, g_exit_status);
-	}
-	else
-		if (chdir(cmd[1]) != 0)
-			print_error_cd(cmd[1], g_exit_status);
-}
-
-void update_env_vars(char **mini_envp, char *cur_dir)
-{
-	char	new_dir[4096];
-
-	getcwd(new_dir, 4096);
-	update_env(cur_dir, "OLDPWD", &mini_envp);
-	update_env(new_dir, "PWD", &mini_envp);
-}
-
-void change_directory(t_commands **commands, char ***mini_envp, int *g_exit_status)
-{
-	char	**cmd;
-	char	cur_dir[4096];
-
-	*g_exit_status = 0;
-	if ((*commands)->next != NULL)
-	{
-		*commands = (*commands)->next;
-		return ;
-	}
-	getcwd(cur_dir, 4096);
-	cmd = (*commands)->args;
-	handle_directory_change(cmd, mini_envp, g_exit_status);
-	if (*g_exit_status == 0)
-	{
-		update_env_vars(*mini_envp, cur_dir);
-	}
-}
-
-int	print_exit_status(int *g_exit_status)
-{
-	printf("%d\n", *g_exit_status);
-	*g_exit_status = 0;
-	return (1);
-}
-
-int	execute_builtin_command(t_commands **cmd_list,
-	char ***envp, int *g_exit_status)
-{
-	if (strcmp((*cmd_list)->cmd, "echo") == 0
-		&& (*cmd_list)->args[1]
-		&& strcmp((*cmd_list)->args[1], "$?") == 0)
-		return (print_exit_status(g_exit_status));
-	else if (strcmp((*cmd_list)->cmd, "cd") == 0)
-	{
-		change_directory(cmd_list, envp, g_exit_status);
-		return (1);
-	}
-	else if (strcmp((*cmd_list)->cmd, "echo") == 0)
-		return (print_echo((*cmd_list)->args, g_exit_status));
-	else if (strcmp((*cmd_list)->cmd, "env") == 0)
-		return (print_env(cmd_list, *envp, g_exit_status));
-	else if (strcmp((*cmd_list)->cmd, "pwd") == 0)
-		return (print_pwd(*envp, g_exit_status));
-	return (0);
-}
-
-int	execute_builtin_commands(t_commands **cmd_list,
-	char ***envp, int *g_exit_status, t_exec_cmd *vars)
-{
-	int	builtin_executed;
-
-	builtin_executed = 0;
-	builtin_executed = execute_builtin_command(cmd_list, envp, g_exit_status);
-	if (builtin_executed)
-	{
-		if (vars->fdout != STDOUT_FILENO)
-		{
-			dup2(vars->fdout, STDOUT_FILENO);
-			close(vars->fdout);
-		}
-		if ((*cmd_list)->next != NULL && vars->fdin != STDIN_FILENO)
-		{
-			dup2(vars->fdin, STDIN_FILENO);
-			close(vars->fdin);
-		}
-	}
-	return (builtin_executed);
-}
-
-int	execute_external_command(t_commands *cmd_list,
-	t_exec_cmd *vars, char **envp, int *g_exit_status)
-{
-	if (execute_command(cmd_list, vars, envp, g_exit_status) < 0)
-		return (-1);
-	if (cmd_list->next == NULL)
-	{
-		waitpid(vars->pid, &vars->status, 0);
-		if (vars->status)
-			set_exit_status(vars, g_exit_status);
-	}
-	return (0);
-}
-
-void execute_commands(t_commands *cmd_list, char **envp, int *g_exit_status)
-{
-	t_exec_cmd	vars;
-
-	save_original_fd(&vars);
-	if (setup_input(cmd_list, &vars) < 0)
-		return ;
-	while (cmd_list)
-	{
-		dup2(vars.fdin, STDIN_FILENO);
-		close(vars.fdin);
-		if (setup_output(cmd_list, &vars) < 0)
-			return ;
-		dup2(vars.fdout, STDOUT_FILENO);
-		close(vars.fdout);
-		vars.builtin_executed
-			= execute_builtin_commands(&cmd_list, &envp, g_exit_status, &vars);
-		if (!vars.builtin_executed)
-		{
-			if (execute_external_command(cmd_list, &vars, envp, g_exit_status)
-				< 0)
-				return ;
-		}
-		cmd_list = cmd_list->next;
-	}
-	restore_original_fd(&vars);
-}
-
-void	exit_program(t_commands *commands, char **mini_envp, int *g_exit_status)
-{
-	free_commands(commands);
-	free_path(mini_envp);
-	exit (*g_exit_status);
-}
-
-int	is_num(char *s)
-{
-	int	i;
-
-	i = 0;
-	while (s[i])
-	{
-		if (!(s[i] >= 48 && s[i] <= 57))
-			return (0);
-		i++;
-	}
-	return (1);
-}
-
-void	unset_env(t_commands *commands, char ** mini_envp, int *g_exit_status)
-{
-	int	i;
-
-	i = 1;
-	while (commands->args[i])
-	{
-		unset_variable(commands->args[i], &mini_envp);
-		i++;
-	}
-	*g_exit_status = 0;
-}
-
-void	check_exit_value(t_commands *commands, int *g_exit_status)
-{
-	int	temp;
-
-	if (is_num(commands->args[1]))
-	{
-		temp = ft_atoi(commands->args[1]);
-		*g_exit_status = (temp % 256);
-	}
-	else
-	{
-		ft_putstr_fd("bash: exit: ", STDERR_FILENO);
-		ft_putstr_fd(commands->args[1], STDERR_FILENO);
-		ft_putstr_fd(": numeric argument required\n", STDERR_FILENO);
-		*g_exit_status = 2;
-	}
-}
-
-void	execution(t_commands *commands, char ***mini_envp, int *g_exit_status)
-{
-	if (strcmp(commands->cmd, "export") == 0)
-		export_variable(commands->args, mini_envp, g_exit_status);
-	else if (strcmp(commands->cmd, "unset") == 0)
-		unset_env(commands, *mini_envp, g_exit_status);
-	else if (strcmp(commands->cmd, "exit") == 0)
-	{
-		ft_putstr_fd("exit\n", STDERR_FILENO);
-		if (commands->args[1])
-			check_exit_value(commands, g_exit_status);
-		exit_program(commands, *mini_envp, g_exit_status);
-	}
-	else
-		execute_commands(commands, *mini_envp, g_exit_status);
-}
-
-int	is_envp_null_terminated(char **envp)
-{
-    int	i;
-
-    if (!envp)
-    {
-        fprintf(stderr, "Error: envp is NULL\n");
-        return (0); // Not null-terminated
-    }
-
-    i = 0;
-    while (envp[i])
-    {
-        // Check if the current pointer is valid
-        if (!envp[i])
-        {
-            fprintf(stderr, "Error: envp[%d] is NULL\n", i);
-            return (0); // Not null-terminated
-        }
-        i++;
-    }
-
-    // Check if the array ends with a NULL pointer
-    if (envp[i] != NULL)
-    {
-        fprintf(stderr, "Error: envp is not null-terminated\n");
-        return (0); // Not null-terminated
-    }
-
-    return (1); // Properly null-terminated
-}
-
 int main(int argc, char **argv, char **envp)
 {
 	char			**mini_envp;
@@ -1501,6 +572,9 @@ int main(int argc, char **argv, char **envp)
 	struct termios	new_term;
 	int				g_exit_status;
 
+	g_signal = 0;
+	(void)argc;
+	(void)argv;
 	g_exit_status = 0;
 	mini_envp = copy_envp(envp);
 	while (1)
@@ -1525,11 +599,7 @@ int main(int argc, char **argv, char **envp)
 			execution(commands, &mini_envp, &g_exit_status);
 			free_commands(commands);
 		}
-		else
-			printf("");
 		free(input);
-		if (!is_envp_null_terminated(mini_envp))
-			printf("it is not null terminated\n");
 	}
 	tcsetattr(STDERR_FILENO, TCSANOW, &original_term);
 	free_path(mini_envp);

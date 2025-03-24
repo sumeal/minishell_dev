@@ -1,0 +1,84 @@
+/* ************************************************************************** */
+/*                                                                            */
+/*                                                        :::      ::::::::   */
+/*   execution_utils2.c                                 :+:      :+:    :+:   */
+/*                                                    +:+ +:+         +:+     */
+/*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2025/03/24 13:36:19 by abin-moh          #+#    #+#             */
+/*   Updated: 2025/03/24 17:08:33 by abin-moh         ###   ########.fr       */
+/*                                                                            */
+/* ************************************************************************** */
+
+#include "minishell.h"
+
+int	print_error(char *s, int exit)
+{
+	perror(s);
+	return (exit);
+}
+
+void	free_path(char **paths)
+{
+	int	i;
+
+	i = -1;
+	while (paths[++i])
+		free(paths[i]);
+	free(paths);
+}
+
+char	*get_path(char *cmd, char **envp)
+{
+	char	*part_path;
+	char	**paths;
+	char	*path;
+	int		i;
+
+	i = 0;
+	while (ft_strnstr(envp[i], "PATH=", 5) == NULL)
+		i++;
+	paths = ft_split(envp[i] + 5, ':');
+	i = -1;
+	while (paths[++i])
+	{
+		part_path = ft_strjoin(paths[i], "/");
+		path = ft_strjoin(part_path, cmd);
+		free(part_path);
+		if (!path)
+			break ;
+		if (access(path, F_OK) == 0)
+			return (path);
+		free(path);
+	}
+	free_path(paths);
+	return (NULL);
+}
+
+int	setup_input(t_commands *cmd, t_exec_cmd *vars)
+{
+	if (cmd->input_file)
+	{
+		vars->fdin = open(cmd->input_file, O_RDONLY);
+		if (vars->fdin < 0)
+			return (print_error("open", -1));
+	}
+	else
+		vars->fdin = dup(vars->ori_in);
+	return (0);
+}
+
+int	handle_last_command_output(t_commands *cmd, t_exec_cmd *vars)
+{
+	int	flags;
+
+	flags = O_WRONLY | O_CREAT;
+	if (cmd->append_mode)
+		flags |= O_APPEND;
+	else
+		flags |= O_TRUNC;
+	vars->fdout = open(cmd->output_file, flags, 0644);
+	if (vars->fdout < 0)
+		return (print_error("open", -1));
+	return (0);
+}
