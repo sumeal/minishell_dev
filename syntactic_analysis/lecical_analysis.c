@@ -3,10 +3,17 @@
 /*                                                        :::      ::::::::   */
 /*   lecical_analysis.c                                 :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
+<<<<<<< HEAD
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/03/13 16:49:29 by jchen2            #+#    #+#             */
 /*   Updated: 2025/03/25 13:16:35 by abin-moh         ###   ########.fr       */
+=======
+/*   By: jchen2 <jchen2@student.42kl.edu.my>        +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2025/03/13 16:49:29 by jchen2            #+#    #+#             */
+/*   Updated: 2025/03/24 15:34:17 by jchen2           ###   ########.fr       */
+>>>>>>> refs/remotes/origin/main
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -71,9 +78,13 @@ static int	create_lexems(t_token **lexems, char **arr, char **mini_envp, int s)
 		if (i == 0)
 			*lexems = lexem;
 		else
+<<<<<<< HEAD
 		{
 			lexem_tail->next = lexem;
 		}
+=======
+			lexem_tail->next = lexem;
+>>>>>>> refs/remotes/origin/main
 		lexem_tail = lexem;
 		i++;
 	}

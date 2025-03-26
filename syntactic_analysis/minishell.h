@@ -3,10 +3,17 @@
 /*                                                        :::      ::::::::   */
 /*   minishell.h                                        :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
+<<<<<<< HEAD
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/02/25 17:49:25 by jchen2            #+#    #+#             */
 /*   Updated: 2025/03/25 08:28:03 by abin-moh         ###   ########.fr       */
+=======
+/*   By: jchen2 <jchen2@student.42kl.edu.my>        +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2025/02/25 17:49:25 by jchen2            #+#    #+#             */
+/*   Updated: 2025/03/24 14:57:13 by jchen2           ###   ########.fr       */
+>>>>>>> refs/remotes/origin/main
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -64,6 +71,10 @@ typedef struct s_cmd
 	struct s_cmd	*next;
 }	t_cmd;
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> refs/remotes/origin/main
 //free function
 void	free_lexems(t_token *lexems);
 void	free_arr(char **arr);

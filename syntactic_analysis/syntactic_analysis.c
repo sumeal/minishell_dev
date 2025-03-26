@@ -3,10 +3,17 @@
 /*                                                        :::      ::::::::   */
 /*   syntactic_analysis.c                               :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
+<<<<<<< HEAD
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/03/18 15:21:31 by jchen2            #+#    #+#             */
 /*   Updated: 2025/03/25 13:27:19 by abin-moh         ###   ########.fr       */
+=======
+/*   By: jchen2 <jchen2@student.42kl.edu.my>        +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2025/03/18 15:21:31 by jchen2            #+#    #+#             */
+/*   Updated: 2025/03/24 15:35:31 by jchen2           ###   ########.fr       */
+>>>>>>> refs/remotes/origin/main
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -103,7 +110,11 @@ t_cmd	*syntactic_analysis(char *input, char **mini_envp, int *status)
 	return (head);
 }
 
+<<<<<<< HEAD
 
+=======
+/*
+>>>>>>> refs/remotes/origin/main
 #include "minishell.h"
 #include <stdio.h>
 
@@ -190,7 +201,11 @@ int main(int argc, char **argv, char **envp)
 	(void)argv;
 	
 	// Simple command tests
+<<<<<<< HEAD
 	run_test("Simple command", "echo $?", envp);
+=======
+	run_test("Simple command", "echo hello world", envp);
+>>>>>>> refs/remotes/origin/main
 	run_test("Command with options", "ls -la", envp);
 	
 	// Redirection tests
@@ -214,3 +229,7 @@ int main(int argc, char **argv, char **envp)
 	
 	return (0);
 }
+<<<<<<< HEAD
+=======
+*/
+>>>>>>> refs/remotes/origin/main

@@ -3,10 +3,17 @@
 /*                                                        :::      ::::::::   */
 /*   expand_utils_one.c                                 :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
+<<<<<<< HEAD
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/03/18 10:53:19 by jchen2            #+#    #+#             */
 /*   Updated: 2025/03/25 13:49:27 by abin-moh         ###   ########.fr       */
+=======
+/*   By: jchen2 <jchen2@student.42kl.edu.my>        +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2025/03/18 10:53:19 by jchen2            #+#    #+#             */
+/*   Updated: 2025/03/18 11:11:36 by jchen2           ###   ########.fr       */
+>>>>>>> refs/remotes/origin/main
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -97,7 +104,12 @@ static char	*find_key(char *dollar)
 	int		i;
 
 	count = 1;
+<<<<<<< HEAD
 	while (dollar[count] && ft_isalpha(dollar[count]))
+=======
+	while ((dollar[count] && ft_isalpha(dollar[count]))
+		|| dollar[count] == '_' || dollar[1] == '?')
+>>>>>>> refs/remotes/origin/main
 		count++;
 	key = (char *)malloc(count);
 	if (!key)
@@ -109,7 +121,10 @@ static char	*find_key(char *dollar)
 		i++;
 	}
 	key[i] = '\0';
+<<<<<<< HEAD
 	printf("%s\n", key);
+=======
+>>>>>>> refs/remotes/origin/main
 	return (key);
 }
 
@@ -126,7 +141,11 @@ char	*expand_str(char *s, char **mini_envp, int status)
 	i = 0;
 	while (arr[i])
 	{
+<<<<<<< HEAD
 		if (arr[i][0] == '$' && ft_isalpha(arr[i][1]))
+=======
+		if (arr[i][0] == '$' && arr[i][1] != ' ')
+>>>>>>> refs/remotes/origin/main
 		{
 			key = find_key(arr[i]);
 			if (!key)
