@@ -6,20 +6,20 @@
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/03/24 13:24:29 by abin-moh          #+#    #+#             */
-/*   Updated: 2025/03/24 13:27:56 by abin-moh         ###   ########.fr       */
+/*   Updated: 2025/03/25 12:28:03 by abin-moh         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "minishell.h"
 
-void	unset_env(t_commands *commands, char **mini_envp, int *g_exit_status)
+void	unset_env(t_cmd *commands, char **mini_envp, int *g_exit_status)
 {
 	int	i;
 
 	i = 1;
-	while (commands->args[i])
+	while (commands->argv[i])
 	{
-		unset_variable(commands->args[i], &mini_envp);
+		unset_variable(commands->argv[i], &mini_envp);
 		i++;
 	}
 	*g_exit_status = 0;

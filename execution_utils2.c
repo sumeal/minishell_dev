@@ -6,7 +6,7 @@
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/03/24 13:36:19 by abin-moh          #+#    #+#             */
-/*   Updated: 2025/03/24 17:08:33 by abin-moh         ###   ########.fr       */
+/*   Updated: 2025/03/26 09:02:27 by abin-moh         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -55,25 +55,37 @@ char	*get_path(char *cmd, char **envp)
 	return (NULL);
 }
 
-int	setup_input(t_commands *cmd, t_exec_cmd *vars)
+int	setup_input(t_cmd *cmd, t_exec_cmd *vars, int *g_exit_status)
 {
 	if (cmd->input_file)
 	{
 		vars->fdin = open(cmd->input_file, O_RDONLY);
 		if (vars->fdin < 0)
+		{
+			*g_exit_status = 1;
 			return (print_error("open", -1));
+		}
+	}
+	else if (cmd->hd_delimeter)
+	{
+		vars->fdin = hd_printf(cmd->hd_delimeter);
+		if (vars->fdin < 0)
+		{
+			*g_exit_status = 130;
+			return (-1);
+		}
 	}
 	else
 		vars->fdin = dup(vars->ori_in);
 	return (0);
 }
 
-int	handle_last_command_output(t_commands *cmd, t_exec_cmd *vars)
+int	handle_last_command_output(t_cmd *cmd, t_exec_cmd *vars)
 {
 	int	flags;
 
 	flags = O_WRONLY | O_CREAT;
-	if (cmd->append_mode)
+	if (cmd->append)
 		flags |= O_APPEND;
 	else
 		flags |= O_TRUNC;

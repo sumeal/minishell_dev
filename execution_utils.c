@@ -6,7 +6,7 @@
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/03/24 13:34:00 by abin-moh          #+#    #+#             */
-/*   Updated: 2025/03/24 13:34:29 by abin-moh         ###   ########.fr       */
+/*   Updated: 2025/03/25 12:21:52 by abin-moh         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -47,7 +47,7 @@ int	handle_piped_command_output(t_exec_cmd *vars)
 	return (0);
 }
 
-int	setup_output(t_commands *cmd, t_exec_cmd *vars)
+int	setup_output(t_cmd *cmd, t_exec_cmd *vars)
 {
 	if (cmd->next == NULL)
 	{

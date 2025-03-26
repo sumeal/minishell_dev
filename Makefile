@@ -5,6 +5,7 @@ FILES = execution_builtin.c \
 		execution_builtin3.c \
 		execution_utils.c \
 		execution_utils2.c \
+		execution_utils3.c \
 		execution.c \
 		exit.c \
 		export.c \
@@ -14,7 +15,17 @@ FILES = execution_builtin.c \
 		minishell.c \
 		signal.c \
 		unset.c \
-		parse_input.c
+		expand_lexem.c \
+		expand_utils_one.c \
+		expand_utils_two.c \
+		free_funcs.c \
+		ft_split_quotes.c \
+		ft_split_utils_one.c \
+		ft_split_utils_two.c \
+		is_valid_syntax.c \
+		lecical_analysis.c \
+		syntactic_analysis_utils.c \
+		syntactic_analysis.c
 
 LIBFT = libft.a
 

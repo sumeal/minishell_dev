@@ -6,7 +6,7 @@
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/03/24 13:57:16 by abin-moh          #+#    #+#             */
-/*   Updated: 2025/03/24 13:57:24 by abin-moh         ###   ########.fr       */
+/*   Updated: 2025/03/25 11:52:58 by abin-moh         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -26,4 +26,10 @@ char	*ft_getenv(char *name, char **envp)
 		i++;
 	}
 	return (NULL);
+}
+
+int	ignore_export(int *g_exit_status)
+{
+	*g_exit_status = 0;
+	return (1);
 }

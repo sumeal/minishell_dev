@@ -6,45 +6,44 @@
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/03/24 11:51:58 by abin-moh          #+#    #+#             */
-/*   Updated: 2025/03/24 16:11:48 by abin-moh         ###   ########.fr       */
+/*   Updated: 2025/03/26 13:27:55 by abin-moh         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "minishell.h"
 
-void	execution(t_commands *commands, char ***mini_envp, int *g_exit_status)
+void	execution(t_cmd *commands, char ***mini_envp, int *g_exit_status)
 {
-	if (ft_strcmp(commands->cmd, "export") == 0)
+	if (ft_strcmp(commands->argv[0], "export") == 0)
 	{	
 		if (commands->next == NULL)
-			export_variable(commands->args, mini_envp, g_exit_status);
+			export_variable(commands->argv, mini_envp, g_exit_status);
 		else
 			execute_commands(commands->next, *mini_envp, g_exit_status);
 	}
-	else if (ft_strcmp(commands->cmd, "unset") == 0)
+	else if (ft_strcmp(commands->argv[0], "unset") == 0)
 	{
 		if (commands->next == NULL)
 			unset_env(commands, *mini_envp, g_exit_status);
 		else
 			execute_commands(commands->next, *mini_envp, g_exit_status);
 	}
-	else if (ft_strcmp(commands->cmd, "exit") == 0)
+	else if (ft_strcmp(commands->argv[0], "exit") == 0)
 	{
-		ft_putstr_fd("exit\n", STDERR_FILENO);
-		if (commands->args[1])
-			check_exit_value(commands, g_exit_status);
-		exit_program(commands, *mini_envp, g_exit_status);
+		check_exit_value(commands, *mini_envp, g_exit_status);
+		if (commands->next)
+			execute_commands(commands->next, *mini_envp, g_exit_status);
 	}
 	else
 		execute_commands(commands, *mini_envp, g_exit_status);
 }
 
-void	execute_commands(t_commands *cmd_list, char **envp, int *g_exit_status)
+void	execute_commands(t_cmd *cmd_list, char **envp, int *g_exit_status)
 {
 	t_exec_cmd	vars;
 
 	save_original_fd(&vars);
-	if (setup_input(cmd_list, &vars) < 0)
+	if (setup_input(cmd_list, &vars, g_exit_status) < 0)
 		return ;
 	while (cmd_list)
 	{
@@ -67,7 +66,7 @@ void	execute_commands(t_commands *cmd_list, char **envp, int *g_exit_status)
 	restore_original_fd(&vars);
 }
 
-int	execute_command(t_commands *cmd,
+int	execute_command(t_cmd *cmd,
 	t_exec_cmd *vars, char **envp, int *g_exit_status)
 {
 	char	*path;
@@ -77,13 +76,13 @@ int	execute_command(t_commands *cmd,
 	vars->pid = fork();
 	if (vars->pid == 0)
 	{
-		path = get_path(cmd->cmd, envp);
+		path = get_path(cmd->argv[0], envp);
 		if (path == NULL)
 		{
-			printf("%s: command not found\n", cmd->cmd);
+			printf("%s: command not found\n", cmd->argv[0]);
 			exit(127);
 		}
-		execve(path, cmd->args, envp);
+		execve(path, cmd->argv, envp);
 		perror("execve");
 		exit(EXIT_FAILURE);
 	}
@@ -92,7 +91,7 @@ int	execute_command(t_commands *cmd,
 	return (0);
 }
 
-int	execute_external_command(t_commands *cmd_list,
+int	execute_external_command(t_cmd *cmd_list,
 	t_exec_cmd *vars, char **envp, int *g_exit_status)
 {
 	if (execute_command(cmd_list, vars, envp, g_exit_status) < 0)
@@ -106,23 +105,28 @@ int	execute_external_command(t_commands *cmd_list,
 	return (0);
 }
 
-int	execute_builtin_command(t_commands **cmd_list,
+int	execute_builtin_command(t_cmd **cmd,
 	char ***envp, int *g_exit_status)
 {
-	if (strcmp((*cmd_list)->cmd, "echo") == 0
-		&& (*cmd_list)->args[1]
-		&& strcmp((*cmd_list)->args[1], "$?") == 0)
+	if (ft_strcmp((*cmd)->argv[0], "echo") == 0
+		&& (*cmd)->argv[1]
+		&& ft_strcmp((*cmd)->argv[1], "$?") == 0)
 		return (print_exit_status(g_exit_status));
-	else if (strcmp((*cmd_list)->cmd, "cd") == 0)
+	else if (ft_strcmp((*cmd)->argv[0], "cd") == 0 && (*cmd)->prev == NULL
+		&& (*cmd)->next == NULL)
 	{
-		change_directory(cmd_list, envp, g_exit_status);
+		change_directory(cmd, envp, g_exit_status);
 		return (1);
 	}
-	else if (strcmp((*cmd_list)->cmd, "echo") == 0)
-		return (print_echo((*cmd_list)->args, g_exit_status));
-	else if (strcmp((*cmd_list)->cmd, "env") == 0)
-		return (print_env(cmd_list, *envp, g_exit_status));
-	else if (strcmp((*cmd_list)->cmd, "pwd") == 0)
+	else if (ft_strcmp((*cmd)->argv[0], "echo") == 0)
+		return (print_echo((*cmd)->argv, g_exit_status));
+	else if (ft_strcmp((*cmd)->argv[0], "env") == 0)
+		return (print_env(cmd, *envp, g_exit_status));
+	else if (ft_strcmp((*cmd)->argv[0], "pwd") == 0)
 		return (print_pwd(*envp, g_exit_status));
+	else if (ft_strcmp((*cmd)->argv[0], "export") == 0
+		|| ft_strcmp((*cmd)->argv[0], "unset") == 0
+		|| ft_strcmp((*cmd)->argv[0], "cd") == 0)
+		return (ignore_export(g_exit_status));
 	return (0);
 }

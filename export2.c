@@ -6,7 +6,7 @@
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/03/24 13:06:11 by abin-moh          #+#    #+#             */
-/*   Updated: 2025/03/24 15:06:41 by abin-moh         ###   ########.fr       */
+/*   Updated: 2025/03/25 10:08:07 by abin-moh         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -28,7 +28,7 @@ char	*get_var_name(char *envp)
 
 	pos = ft_strchr(envp, '=');
 	if (!pos)
-		return (NULL);
+		return (ft_strdup(envp));
 	return (ft_substr(envp, 0, pos - envp));
 }
 

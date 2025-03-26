@@ -6,7 +6,7 @@
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/03/24 13:48:06 by abin-moh          #+#    #+#             */
-/*   Updated: 2025/03/24 13:50:31 by abin-moh         ###   ########.fr       */
+/*   Updated: 2025/03/26 12:50:09 by abin-moh         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -53,7 +53,7 @@ void	handle_directory_change(char **cmd,
 	char	cur_dir[4096];
 
 	getcwd(cur_dir, 4096);
-	if (!cmd[1])
+	if (!cmd[1] || ft_strcmp(cmd[1], "~") == 0)
 	{
 		home = ft_getenv("HOME", *mini_envp);
 		if (chdir(home) != 0)
@@ -82,7 +82,7 @@ void	update_env_vars(char **mini_envp, char *cur_dir)
 	update_env(new_dir, "PWD", &mini_envp);
 }
 
-void	change_directory(t_commands **commands,
+void	change_directory(t_cmd **commands,
 			char ***mini_envp, int *g_exit_status)
 {
 	char	**cmd;
@@ -95,7 +95,7 @@ void	change_directory(t_commands **commands,
 		return ;
 	}
 	getcwd(cur_dir, 4096);
-	cmd = (*commands)->args;
+	cmd = (*commands)->argv;
 	handle_directory_change(cmd, mini_envp, g_exit_status);
 	if (*g_exit_status == 0)
 	{

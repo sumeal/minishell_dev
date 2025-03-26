@@ -6,7 +6,7 @@
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/03/24 13:59:07 by abin-moh          #+#    #+#             */
-/*   Updated: 2025/03/24 14:00:07 by abin-moh         ###   ########.fr       */
+/*   Updated: 2025/03/26 09:30:25 by abin-moh         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -16,7 +16,7 @@ void	handle_signal_parent(int signum)
 {
 	if (signum == SIGINT)
 	{
-		printf("\n^C\n");
+		printf("\n^Cbwek\n");
 		rl_on_new_line();
 		rl_replace_line("", 0);
 		rl_redisplay();

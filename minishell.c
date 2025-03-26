@@ -6,7 +6,7 @@
 /*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/02/28 12:12:22 by abin-moh          #+#    #+#             */
-/*   Updated: 2025/03/24 15:27:48 by abin-moh         ###   ########.fr       */
+/*   Updated: 2025/03/26 14:04:54 by abin-moh         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -547,6 +547,41 @@ volatile sig_atomic_t g_signal = 0;
 //     }
 // }
 
+void print_cmd(t_cmd *cmd)
+{
+	int i;
+	
+	printf("Command:\n");
+	
+	// Print args
+	if (cmd->argv)
+	{
+		i = 0;
+		printf("  Arguments: ");
+		while (cmd->argv[i])
+		{
+			printf("\"%s\" ", cmd->argv[i]);
+			i++;
+		}
+		printf("\n");
+	}
+	else
+		printf("  Arguments: None\n");
+	
+	// Print redirections
+	if (cmd->input_file)
+		printf("  Input file: %s\n", cmd->input_file);
+	if (cmd->output_file)
+	{
+		if (cmd->append)
+			printf("  Output file (append): %s\n", cmd->output_file);
+		else
+			printf("  Output file: %s\n", cmd->output_file);
+	}
+	if (cmd->is_hd)
+		printf("  Heredoc delimiter: %s\n", cmd->hd_delimeter);
+}
+
 char	**copy_envp(char **envp)
 {
 	char	**copy;
@@ -567,7 +602,7 @@ int main(int argc, char **argv, char **envp)
 {
 	char			**mini_envp;
 	char			*input;
-	t_commands		*commands;
+	t_cmd			*commands;
 	struct termios	original_term;
 	struct termios	new_term;
 	int				g_exit_status;
@@ -593,11 +628,16 @@ int main(int argc, char **argv, char **envp)
 		}
 		if (*input)
 			add_history(input);
-		commands = parse_input(input);
+		commands = syntactic_analysis(input, mini_envp, &g_exit_status);
 		if (commands)
 		{
-			execution(commands, &mini_envp, &g_exit_status);
-			free_commands(commands);
+			while(commands)
+			{
+				print_cmd(commands);
+				commands = commands->next;
+			}
+			//execution(commands, &mini_envp, &g_exit_status);
+			free_cmds(commands);
 		}
 		free(input);
 	}
