@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   minishell.h                                        :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: jchen2 <jchen2@student.42kl.edu.my>        +#+  +:+       +#+        */
+/*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/02/28 12:03:21 by abin-moh          #+#    #+#             */
-/*   Updated: 2025/04/29 19:14:31 by jchen2           ###   ########.fr       */
+/*   Updated: 2025/04/30 10:54:11 by abin-moh         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -149,6 +149,7 @@ int		check_valid_value(char *s);
 void	add_new_variable(char ***envp, char **new_var);
 char	*change_format(char *args);
 int		skip(char *envp1, char *envp2);
+int		print_export_error(char *s);
 
 /*unset.c*/
 int		unset_env(t_cmd *commands, char **mini_envp, int *g_exit_status);

@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   export3.c                                          :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: muzz <muzz@student.42.fr>                  +#+  +:+       +#+        */
+/*   By: abin-moh <abin-moh@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/03/24 13:13:08 by abin-moh          #+#    #+#             */
-/*   Updated: 2025/04/23 23:44:01 by muzz             ###   ########.fr       */
+/*   Updated: 2025/04/30 10:53:58 by abin-moh         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -73,4 +73,12 @@ int	skip(char *envp1, char *envp2)
 	if (ft_strncmp(envp1, "_=", 2) == 0 || ft_strncmp(envp2, "_=", 2) == 0)
 		return (1);
 	return (0);
+}
+
+int	print_export_error(char *s)
+{
+	ft_putstr_fd("bash: export: `", STDERR_FILENO);
+	ft_putstr_fd(s, STDERR_FILENO);
+	ft_putstr_fd("': not a valid identifier\n", STDERR_FILENO);
+	return (-1);
 }
